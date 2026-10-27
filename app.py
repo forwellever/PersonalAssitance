@@ -52,7 +52,9 @@ class FocusFlowHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = parsed.path.rstrip('/')
+        if not path:
+            path = '/'
 
         # API Routes
         if path == '/api/tasks':
@@ -130,7 +132,7 @@ class FocusFlowHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = parsed.path.rstrip('/')
         body = self._read_body_json()
 
         # 1. 任務新增
@@ -219,7 +221,7 @@ class FocusFlowHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_PUT(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = parsed.path.rstrip('/')
         body = self._read_body_json()
 
         # Update Task
@@ -250,7 +252,7 @@ class FocusFlowHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = parsed.path.rstrip('/')
 
         # Delete Task
         match_task = re.match(r'^/api/tasks/(\d+)$', path)

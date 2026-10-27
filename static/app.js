@@ -2,11 +2,19 @@
  * FocusFlow Client Application Logic
  */
 
+const DEFAULT_CATEGORIES = [
+  { id: 1, name: '報告', color: 'indigo' },
+  { id: 2, name: '簡報', color: 'rose' },
+  { id: 3, name: '資料分析', color: 'amber' },
+  { id: 4, name: '系統測試', color: 'emerald' },
+  { id: 5, name: '其他', color: 'slate' }
+];
+
 let currentTab = 'dashboard';
 let state = {
   tasks: [],
   ideas: [],
-  categories: [],
+  categories: [...DEFAULT_CATEGORIES],
   ideaFilter: 'all', // 'all' or 'starred'
   businessLogs: [],
   stats: {},
@@ -80,14 +88,34 @@ async function loadStats() {
 async function loadCategories() {
   try {
     const res = await fetch('/api/categories');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    if (json.success) {
+    if (json.success && Array.isArray(json.data) && json.data.length > 0) {
       state.categories = json.data;
-      populateCategoryDropdowns();
-      renderCategoryList();
+    } else {
+      fallbackCategories();
     }
   } catch (err) {
-    console.error('Failed to load categories:', err);
+    console.warn('API /api/categories 尚未回應，啟用既有類別保護備援機制:', err);
+    fallbackCategories();
+  }
+  populateCategoryDropdowns();
+  renderCategoryList();
+}
+
+function fallbackCategories() {
+  if (!state.categories || state.categories.length === 0) {
+    state.categories = [...DEFAULT_CATEGORIES];
+  }
+  // 保障從既有任務中擷取類別，絕不丟失任何正在使用的類別
+  const existingNames = new Set(state.categories.map(c => c.name));
+  if (state.tasks && state.tasks.length > 0) {
+    state.tasks.forEach(t => {
+      if (t.category && !existingNames.has(t.category)) {
+        existingNames.add(t.category);
+        state.categories.push({ id: Date.now() + Math.random(), name: t.category, color: 'indigo' });
+      }
+    });
   }
 }
 
@@ -202,10 +230,14 @@ async function saveNewCategory() {
       await loadCategories();
       renderTasks();
     } else {
-      showToast(json.error || '新增失敗', 'error');
+      if (json.error && json.error.includes('Endpoint not found')) {
+        alert('【伺服器需要重啟提醒】\n\n您終端機中的舊版 Python 伺服器正在運行中，尚未加載新增的類別 API 端點。\n\n請在終端機中按【Ctrl + C】停止服務，再重新執行【./run.sh】，然後重新整理頁面即可正常新增自訂類別！');
+      } else {
+        showToast(json.error || '新增失敗', 'error');
+      }
     }
   } catch (err) {
-    showToast('新增失敗：' + err.message, 'error');
+    alert('【伺服器需要重啟提醒】\n\n後端 API 尚未更新，請在終端機中按【Ctrl + C】停止服務，再重新執行【./run.sh】，即可啟用類別管理！');
   }
 }
 
@@ -225,10 +257,14 @@ async function editCategory(id, currentName, currentColor) {
       await loadCategories();
       await loadTasks();
     } else {
-      showToast(json.error || '修改失敗', 'error');
+      if (json.error && json.error.includes('Endpoint not found')) {
+        alert('請在終端機按 Ctrl + C 後重啟 ./run.sh 以載入新 API 端點！');
+      } else {
+        showToast(json.error || '修改失敗', 'error');
+      }
     }
   } catch (err) {
-    showToast('修改失敗：' + err.message, 'error');
+    alert('後端尚未載入修改 API，請在終端機重啟 ./run.sh！');
   }
 }
 
@@ -242,9 +278,15 @@ async function deleteCategory(id, name) {
       showToast(`類別「${name}」已刪除`, 'info');
       await loadCategories();
       await loadTasks();
+    } else {
+      if (json.error && json.error.includes('Endpoint not found')) {
+        alert('請在終端機按 Ctrl + C 後重啟 ./run.sh 以載入新 API 端點！');
+      } else {
+        showToast(json.error || '刪除失敗', 'error');
+      }
     }
   } catch (err) {
-    showToast('刪除失敗：' + err.message, 'error');
+    alert('後端尚未載入刪除 API，請在終端機重啟 ./run.sh！');
   }
 }
 
