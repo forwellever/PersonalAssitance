@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FocusFlow - 智慧工作追蹤與代辦排程</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+
+  <!-- Top Navigation Bar -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-indigo-200 shadow-md">
+          <i class="fa-solid fa-bolt text-lg"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg text-slate-900 leading-tight">FocusFlow</h1>
+          <p class="text-xs text-slate-500">智慧工作追蹤 & 語音排程</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="hidden md:flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-sm font-medium">
+        <button onclick="switchTab('dashboard')" id="tab-btn-dashboard" class="nav-tab px-4 py-2 rounded-lg transition-all flex items-center gap-2 active-tab">
+          <i class="fa-solid fa-chart-pie"></i> 全域儀表板
+        </button>
+        <button onclick="switchTab('tasks')" id="tab-btn-tasks" class="nav-tab px-4 py-2 rounded-lg transition-all flex items-center gap-2">
+          <i class="fa-solid fa-list-check"></i> A. 靜態工作
+        </button>
+        <button onclick="switchTab('ideas')" id="tab-btn-ideas" class="nav-tab px-4 py-2 rounded-lg transition-all flex items-center gap-2">
+          <i class="fa-regular fa-lightbulb"></i> B. 創意發想
+        </button>
+        <button onclick="switchTab('business')" id="tab-btn-business" class="nav-tab px-4 py-2 rounded-lg transition-all flex items-center gap-2">
+          <i class="fa-solid fa-microphone-lines"></i> C. 業務與行事曆
+        </button>
+      </nav>
+
+      <!-- Quick Action Button -->
+      <div class="flex items-center gap-2">
+        <button onclick="triggerQuickVoice()" class="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-rose-100 hover:shadow-md">
+          <i class="fa-solid fa-microphone"></i>
+          <span class="hidden sm:inline">語音速記</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Tabs -->
+    <div class="md:hidden flex border-t border-slate-200 overflow-x-auto px-2 py-1 bg-slate-50 text-xs">
+      <button onclick="switchTab('dashboard')" class="px-3 py-2 whitespace-nowrap font-medium text-indigo-600">儀表板</button>
+      <button onclick="switchTab('tasks')" class="px-3 py-2 whitespace-nowrap font-medium text-slate-600">A. 靜態工作</button>
+      <button onclick="switchTab('ideas')" class="px-3 py-2 whitespace-nowrap font-medium text-slate-600">B. 創意發想</button>
+      <button onclick="switchTab('business')" class="px-3 py-2 whitespace-nowrap font-medium text-slate-600">C. 業務行事曆</button>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
+
+    <!-- ================= 1. DASHBOARD TAB ================= -->
+    <section id="view-dashboard" class="tab-view space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">工作總覽</h2>
+          <p class="text-slate-500 text-sm mt-0.5">即時掌握三大模組進度與排程狀態</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="refreshData()" class="px-3 py-2 text-sm bg-white border border-slate-200 hover:bg-slate-50 rounded-lg text-slate-600 flex items-center gap-1.5 transition">
+            <i class="fa-solid fa-rotate-right"></i> 重新整理
+          </button>
+        </div>
+      </div>
+
+      <!-- Metric Cards Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span class="text-xs font-semibold text-amber-600 uppercase tracking-wider">靜態工作 (進行中)</span>
+            <div class="text-2xl font-bold text-slate-900 mt-1" id="stat-pending-tasks">0</div>
+            <p class="text-xs text-slate-400 mt-1">報告、簡報與測試交付</p>
+          </div>
+          <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl">
+            <i class="fa-solid fa-spinner"></i>
+          </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span class="text-xs font-semibold text-emerald-600 uppercase tracking-wider">已完成交付</span>
+            <div class="text-2xl font-bold text-slate-900 mt-1" id="stat-completed-tasks">0</div>
+            <p class="text-xs text-slate-400 mt-1">累計達成目標</p>
+          </div>
+          <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
+            <i class="fa-solid fa-circle-check"></i>
+          </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span class="text-xs font-semibold text-purple-600 uppercase tracking-wider">靈感孵化池</span>
+            <div class="text-2xl font-bold text-slate-900 mt-1" id="stat-total-ideas">0</div>
+            <p class="text-xs text-slate-400 mt-1"><span id="stat-starred-ideas">0</span> 則星號重點</p>
+          </div>
+          <div class="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-xl">
+            <i class="fa-regular fa-lightbulb"></i>
+          </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span class="text-xs font-semibold text-blue-600 uppercase tracking-wider">業務排程紀要</span>
+            <div class="text-2xl font-bold text-slate-900 mt-1" id="stat-scheduled-meetings">0</div>
+            <p class="text-xs text-slate-400 mt-1">已設定行事曆提醒</p>
+          </div>
+          <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
+            <i class="fa-regular fa-calendar-check"></i>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Action Banners -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Module A Card -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:border-indigo-300 transition-all flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-bold px-2.5 py-1 bg-amber-100 text-amber-800 rounded-md">象限 A</span>
+              <i class="fa-solid fa-arrow-right text-slate-300"></i>
+            </div>
+            <h3 class="font-bold text-lg text-slate-900">靜態工作管理</h3>
+            <p class="text-sm text-slate-500 mt-2">追蹤報告交付、投影片簡報、資料分析及系統測試，支援甘特看板與完成百分比。</p>
+          </div>
+          <button onclick="switchTab('tasks')" class="mt-5 w-full py-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 rounded-xl text-sm font-semibold transition">
+            前往看板視圖 →
+          </button>
+        </div>
+
+        <!-- Module B Card -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:border-purple-300 transition-all flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-bold px-2.5 py-1 bg-purple-100 text-purple-800 rounded-md">象限 B</span>
+              <i class="fa-solid fa-arrow-right text-slate-300"></i>
+            </div>
+            <h3 class="font-bold text-lg text-slate-900">創意發想靈感箱</h3>
+            <p class="text-sm text-slate-500 mt-2">速記細節不明確的瞬間靈感，自定義色彩與標籤，成熟後一鍵晉升為正式專案任務。</p>
+          </div>
+          <button onclick="switchTab('ideas')" class="mt-5 w-full py-2 bg-slate-100 hover:bg-purple-50 hover:text-purple-600 text-slate-700 rounded-xl text-sm font-semibold transition">
+            瀏覽靈感便籤 →
+          </button>
+        </div>
+
+        <!-- Module C Card -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:border-blue-300 transition-all flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-bold px-2.5 py-1 bg-blue-100 text-blue-800 rounded-md">象限 C</span>
+              <i class="fa-solid fa-arrow-right text-slate-300"></i>
+            </div>
+            <h3 class="font-bold text-lg text-slate-900">業務語音 & 行事曆</h3>
+            <p class="text-sm text-slate-500 mt-2">透過語音輸入自動提煉重點摘要、抓取關鍵對談時序（如「下週三下午」）並一鍵排入 Google 日曆。</p>
+          </div>
+          <button onclick="switchTab('business')" class="mt-5 w-full py-2 bg-slate-100 hover:bg-blue-50 hover:text-blue-600 text-slate-700 rounded-xl text-sm font-semibold transition">
+            開啟語音助理 →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 2. TASKS TAB (靜態工作) ================= -->
+    <section id="view-tasks" class="tab-view hidden space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">A. 靜態工作管理</h2>
+          <p class="text-slate-500 text-sm mt-0.5">報告編製、簡報發布、資料分析、系統驗證任務追蹤</p>
+        </div>
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <!-- Category Filter -->
+          <select id="task-filter-category" onchange="renderTasks()" class="px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="all">所有類別</option>
+          </select>
+          <button onclick="openCategoryModal()" title="管理任務類別" class="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-sm rounded-xl flex items-center gap-1.5 shadow-sm transition">
+            <i class="fa-solid fa-tags text-indigo-500"></i> 管理類別
+          </button>
+          <button onclick="openTaskModal()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-xl flex items-center gap-2 shadow-sm transition whitespace-nowrap">
+            <i class="fa-solid fa-plus"></i> 新增任務
+          </button>
+        </div>
+      </div>
+
+      <!-- Kanban Board Columns -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <!-- 1. 待處理 -->
+        <div class="bg-slate-100/70 p-4 rounded-2xl flex flex-col border border-slate-200/60 min-h-[500px]">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <div class="flex items-center gap-2 font-bold text-slate-700 text-sm">
+              <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span> 待處理
+            </div>
+            <span id="count-pending" class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold">0</span>
+          </div>
+          <div id="column-pending" class="space-y-3 flex-1 overflow-y-auto"></div>
+        </div>
+
+        <!-- 2. 進行中 -->
+        <div class="bg-amber-50/50 p-4 rounded-2xl flex flex-col border border-amber-200/50 min-h-[500px]">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <div class="flex items-center gap-2 font-bold text-amber-900 text-sm">
+              <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> 進行中
+            </div>
+            <span id="count-in_progress" class="text-xs bg-amber-200/70 text-amber-800 px-2 py-0.5 rounded-full font-bold">0</span>
+          </div>
+          <div id="column-in_progress" class="space-y-3 flex-1 overflow-y-auto"></div>
+        </div>
+
+        <!-- 3. 審查 / 測試 -->
+        <div class="bg-blue-50/50 p-4 rounded-2xl flex flex-col border border-blue-200/50 min-h-[500px]">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <div class="flex items-center gap-2 font-bold text-blue-900 text-sm">
+              <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> 審查 / 測試中
+            </div>
+            <span id="count-review" class="text-xs bg-blue-200/70 text-blue-800 px-2 py-0.5 rounded-full font-bold">0</span>
+          </div>
+          <div id="column-review" class="space-y-3 flex-1 overflow-y-auto"></div>
+        </div>
+
+        <!-- 4. 已完成 -->
+        <div class="bg-emerald-50/50 p-4 rounded-2xl flex flex-col border border-emerald-200/50 min-h-[500px]">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <div class="flex items-center gap-2 font-bold text-emerald-900 text-sm">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> 已完成
+            </div>
+            <span id="count-completed" class="text-xs bg-emerald-200/70 text-emerald-800 px-2 py-0.5 rounded-full font-bold">0</span>
+          </div>
+          <div id="column-completed" class="space-y-3 flex-1 overflow-y-auto"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 3. IDEAS TAB (創意發想) ================= -->
+    <section id="view-ideas" class="tab-view hidden space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">B. 創意發想靈感箱</h2>
+          <p class="text-slate-500 text-sm mt-0.5">速記未成形靈感，支援標籤整理、星號精選篩選與補充編輯</p>
+        </div>
+        <div class="flex items-center gap-2 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+          <button id="idea-filter-all" onclick="filterIdeas('all')" class="px-3.5 py-1.5 rounded-lg bg-white text-purple-700 shadow-sm transition">
+            全部靈感 (<span id="idea-count-all">0</span>)
+          </button>
+          <button id="idea-filter-starred" onclick="filterIdeas('starred')" class="px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-amber-600 transition flex items-center gap-1">
+            <i class="fa-solid fa-star text-amber-500"></i> 星號精選 (<span id="idea-count-starred">0</span>)
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Idea Input Box -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+        <h3 class="text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+          <i class="fa-regular fa-pen-to-square text-purple-600"></i> 捕捉靈光一閃
+        </h3>
+        <div class="space-y-3">
+          <input id="idea-input-title" type="text" placeholder="輸入靈感主旨（如：AI 輔助週報自動生成構想）..." class="w-full px-4 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none">
+          <textarea id="idea-input-content" rows="2" placeholder="詳細細節、點子要點（即使不成熟也先記錄下來）..." class="w-full px-4 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none"></textarea>
+          
+          <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400 font-medium">便籤顏色：</span>
+              <div class="flex gap-1.5" id="idea-color-picker">
+                <button type="button" onclick="selectIdeaColor('#fef3c7')" class="w-6 h-6 rounded-full bg-amber-100 border-2 border-amber-400 ring-2 ring-offset-1 ring-amber-400" data-color="#fef3c7"></button>
+                <button type="button" onclick="selectIdeaColor('#dbeafe')" class="w-6 h-6 rounded-full bg-blue-100 border border-slate-300" data-color="#dbeafe"></button>
+                <button type="button" onclick="selectIdeaColor('#dcfce7')" class="w-6 h-6 rounded-full bg-emerald-100 border border-slate-300" data-color="#dcfce7"></button>
+                <button type="button" onclick="selectIdeaColor('#fce7f3')" class="w-6 h-6 rounded-full bg-pink-100 border border-slate-300" data-color="#fce7f3"></button>
+                <button type="button" onclick="selectIdeaColor('#f3e8ff')" class="w-6 h-6 rounded-full bg-purple-100 border border-slate-300" data-color="#f3e8ff"></button>
+              </div>
+              <input id="idea-input-tags" type="text" placeholder="標籤 (以逗號隔開)" class="ml-2 px-3 py-1 text-xs border border-slate-200 rounded-lg w-36 focus:outline-none">
+            </div>
+
+            <button onclick="saveIdea()" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-xl shadow-sm transition flex items-center gap-2">
+              <i class="fa-solid fa-plus"></i> 儲存靈感
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ideas Cards Grid -->
+      <div id="ideas-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Dynamic idea cards will be loaded here -->
+      </div>
+    </section>
+
+    <!-- ================= 4. BUSINESS & CALENDAR TAB (業務會談) ================= -->
+    <section id="view-business" class="tab-view hidden space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">C. 業務會談與語音排程</h2>
+          <p class="text-slate-500 text-sm mt-0.5">支援語音轉文字、AI 重點對話提煉、提取約定時序並同步 Google Calendar</p>
+        </div>
+      </div>
+
+      <!-- Voice Recording / Speech Input Studio -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div class="flex items-center gap-3">
+            <div id="mic-status-icon" class="w-12 h-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center text-xl transition-all">
+              <i class="fa-solid fa-microphone"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-slate-800" id="mic-status-text">語音輸入待命</h3>
+              <p class="text-xs text-slate-400" id="mic-status-subtext">點擊右側按鈕開始說話，或直接於下方輸入會談紀錄</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 w-full sm:w-auto">
+            <button id="btn-toggle-record" onclick="toggleSpeechRecognition()" class="flex-1 sm:flex-none px-5 py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-medium text-sm rounded-xl shadow-sm transition-all flex items-center justify-center gap-2">
+              <i class="fa-solid fa-microphone"></i>
+              <span id="btn-record-label">開始錄音</span>
+            </button>
+            <button onclick="clearTranscript()" class="px-3.5 py-2.5 text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm transition">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Waveform Simulation Animation -->
+        <div id="recording-indicator" class="hidden flex items-center justify-center gap-1.5 py-2 bg-rose-50/70 rounded-xl border border-rose-100">
+          <div class="w-1.5 h-6 bg-rose-500 rounded-full animate-bounce"></div>
+          <div class="w-1.5 h-8 bg-rose-500 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-4 bg-rose-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-7 bg-rose-500 rounded-full animate-bounce" style="animation-delay: 0.15s"></div>
+          <div class="w-1.5 h-5 bg-rose-500 rounded-full animate-bounce" style="animation-delay: 0.05s"></div>
+          <span class="ml-3 text-xs font-bold text-rose-600">正在聆聽中... 請清晰說出會談內容及約定時程</span>
+        </div>
+
+        <!-- Transcript Input / Output -->
+        <div>
+          <label class="block text-xs font-bold text-slate-500 mb-1.5">會談內容 / 語音辨識文本：</label>
+          <textarea id="business-raw-text" rows="4" placeholder="例如：今天跟宏達科技張經理開會，確認系統在下週三下午兩點前要完成測試驗收並交付測試報告，另外明天下午三點要先寄送規格架構簡報..." class="w-full p-3.5 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+        </div>
+
+        <!-- Trigger AI Parsing -->
+        <div class="flex justify-end">
+          <button onclick="analyzeMeetingText()" id="btn-analyze" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-xl shadow-sm transition flex items-center gap-2">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> 提煉重點摘要 & 解析時序
+          </button>
+        </div>
+      </div>
+
+      <!-- AI Analysis Result Card (Initially Hidden or Populated) -->
+      <div id="ai-result-panel" class="hidden bg-gradient-to-br from-indigo-50/60 to-white p-6 rounded-2xl border border-indigo-200 shadow-sm space-y-4">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-indigo-100 pb-3">
+          <div class="flex items-center gap-2 text-indigo-900 font-bold">
+            <i class="fa-solid fa-brain text-indigo-600"></i> AI 萃取結果
+          </div>
+          <span id="result-client-badge" class="px-2.5 py-1 bg-indigo-100 text-indigo-800 rounded-lg text-xs font-semibold"></span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Summary Box -->
+          <div class="space-y-2">
+            <h4 class="text-xs font-bold text-slate-500 uppercase">談話重點摘要</h4>
+            <div id="result-summary" class="bg-white p-3.5 rounded-xl border border-slate-200 text-sm text-slate-700 whitespace-pre-line"></div>
+          </div>
+
+          <!-- Action Items & Temporal Box -->
+          <div class="space-y-3">
+            <div>
+              <h4 class="text-xs font-bold text-slate-500 uppercase mb-1">識別之關鍵時序</h4>
+              <div class="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-sm text-slate-800">
+                  <i class="fa-regular fa-clock text-amber-500"></i>
+                  <span id="result-event-time" class="font-semibold text-slate-900">未偵測到明確時間</span>
+                </div>
+                <span class="text-xs text-slate-400">時長預設 60 分鐘</span>
+              </div>
+            </div>
+
+            <div>
+              <h4 class="text-xs font-bold text-slate-500 uppercase mb-1">提煉行動清單 (Action Items)</h4>
+              <ul id="result-action-items" class="bg-white p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs text-slate-700"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calendar Integration Buttons -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-indigo-100">
+          <div class="text-xs text-slate-500">
+            <i class="fa-solid fa-circle-info text-indigo-500 mr-1"></i> 點擊下方按鈕可直接開啟 Google Calendar 建立預約與提醒
+          </div>
+
+          <div class="flex items-center gap-2">
+            <a id="btn-gcal-link" href="#" target="_blank" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+              <i class="fa-brands fa-google"></i> 加入 Google 行事曆
+            </a>
+            <button onclick="saveCurrentMeetingLog()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+              <i class="fa-solid fa-floppy-disk"></i> 儲存會談紀錄
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Past Business Logs Archive -->
+      <div class="space-y-3">
+        <h3 class="font-bold text-slate-800 text-base">歷史業務洽談紀錄</h3>
+        <div id="business-logs-list" class="space-y-3">
+          <!-- Dynamic logs -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= MODALS ================= -->
+  <!-- 1. Task Modal (Add/Edit) -->
+  <div id="task-modal" class="hidden fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+        <h3 id="task-modal-title" class="font-bold text-slate-900 text-lg">新增工作任務</h3>
+        <button onclick="closeTaskModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-3 text-sm">
+        <input type="hidden" id="task-edit-id">
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">任務名稱 *</label>
+          <input id="task-input-title" type="text" placeholder="例如：Q4 營運成果報告撰寫" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">類別</label>
+            <select id="task-input-category" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none">
+              <option value="報告">報告 (Report)</option>
+              <option value="簡報">簡報 (Presentation)</option>
+              <option value="資料分析">資料分析 (Analytics)</option>
+              <option value="系統測試">系統測試 (Testing)</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">優先層級</label>
+            <select id="task-input-priority" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none">
+              <option value="urgent">🔴 緊急優先 (Urgent)</option>
+              <option value="high">🟠 高 (High)</option>
+              <option value="medium" selected>🟡 中等 (Medium)</option>
+              <option value="low">🟢 低 (Low)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">截止日期 (Due Date)</label>
+            <input id="task-input-duedate" type="datetime-local" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none">
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">進度 (<span id="task-progress-val">0</span>%)</label>
+            <input id="task-input-progress" type="range" min="0" max="100" value="0" oninput="document.getElementById('task-progress-val').innerText = this.value" class="w-full mt-2 accent-indigo-600">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">備註說明</label>
+          <textarea id="task-input-desc" rows="3" placeholder="補充細節、參考連結、驗收指標..." class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none"></textarea>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+        <button onclick="closeTaskModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">取消</button>
+        <button onclick="saveTaskFromModal()" class="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl">儲存任務</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Convert Idea to Task Modal -->
+  <div id="convert-modal" class="hidden fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+        <h3 class="font-bold text-slate-900 text-lg">🚀 將靈感晉升為正式任務</h3>
+        <button onclick="closeConvertModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <p class="text-xs text-slate-500">將靈感轉移到「A. 靜態工作」看板中，建立具體的執行計劃與截止日期。</p>
+
+      <div class="space-y-3 text-sm">
+        <input type="hidden" id="convert-idea-id">
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">任務標題</label>
+          <input id="convert-task-title" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">歸屬類別</label>
+            <select id="convert-task-category" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none">
+              <option value="報告">報告</option>
+              <option value="簡報">簡報</option>
+              <option value="資料分析" selected>資料分析</option>
+              <option value="系統測試">系統測試</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">截止日期</label>
+            <input id="convert-task-duedate" type="datetime-local" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none">
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+        <button onclick="closeConvertModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">取消</button>
+        <button onclick="submitIdeaConversion()" class="px-5 py-2 text-sm bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-xl">確認晉升</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Category Management Modal -->
+  <div id="category-modal" class="hidden fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm">
+            <i class="fa-solid fa-tags"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-slate-900 text-lg">靜態任務類別管理</h3>
+            <p class="text-xs text-slate-400">自訂、修改或刪除任務類別標籤</p>
+          </div>
+        </div>
+        <button onclick="closeCategoryModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <!-- Add Category Form -->
+      <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 space-y-2.5">
+        <h4 class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+          <i class="fa-solid fa-plus text-indigo-500"></i> 新增自訂類別
+        </h4>
+        <div class="flex flex-wrap items-center gap-2">
+          <input id="cat-new-name" type="text" placeholder="類別名稱 (如：法務審查、外包交付)..." class="flex-1 min-w-[140px] px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <select id="cat-new-color" class="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none">
+            <option value="indigo">藍紫色 (Indigo)</option>
+            <option value="rose">玫瑰紅 (Rose)</option>
+            <option value="amber">琥珀橘 (Amber)</option>
+            <option value="emerald">翡翠綠 (Emerald)</option>
+            <option value="purple">薰衣紫 (Purple)</option>
+            <option value="cyan">青湖藍 (Cyan)</option>
+            <option value="slate">低調灰 (Slate)</option>
+          </select>
+          <button onclick="saveNewCategory()" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-lg transition shadow-sm">
+            新增
+          </button>
+        </div>
+      </div>
+
+      <!-- Existing Categories List -->
+      <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
+        <div class="text-xs font-bold text-slate-500">既有類別列表</div>
+        <div id="category-list-container" class="space-y-1.5">
+          <!-- Dynamic category rows -->
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-slate-100">
+        <button onclick="closeCategoryModal()" class="px-4 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Idea Edit & Supplement Modal -->
+  <div id="idea-edit-modal" class="hidden fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center text-sm">
+            <i class="fa-solid fa-pen-nib"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-slate-900 text-lg">編輯與補充靈感</h3>
+            <p class="text-xs text-slate-400">修改靈感內容、標籤，或追加補充新想法</p>
+          </div>
+        </div>
+        <button onclick="closeIdeaEditModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-3 text-sm">
+        <input type="hidden" id="idea-edit-id">
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">靈感標題</label>
+          <input id="idea-edit-title" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">主要內容</label>
+          <textarea id="idea-edit-content" rows="4" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none leading-relaxed"></textarea>
+        </div>
+
+        <!-- Quick Supplement Box -->
+        <div class="bg-purple-50/70 p-3 rounded-xl border border-purple-100 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-purple-900 flex items-center gap-1.5">
+              <i class="fa-solid fa-bolt text-purple-600"></i> 快速追加補充想法
+            </span>
+            <span class="text-[10px] text-purple-600">自動加上時間標籤並追加至內容</span>
+          </div>
+          <div class="flex gap-2">
+            <input id="idea-supplement-input" type="text" placeholder="補充新點子、延伸步驟或參考案例..." class="flex-1 px-3 py-1.5 text-xs bg-white border border-purple-200 rounded-lg focus:outline-none">
+            <button onclick="appendIdeaSupplement()" type="button" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition whitespace-nowrap">
+              追加補充
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 items-center pt-1">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">標籤 (逗號分隔)</label>
+            <input id="idea-edit-tags" type="text" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none">
+          </div>
+          <div class="flex items-center gap-2 pt-4">
+            <label class="cursor-pointer flex items-center gap-2 text-xs font-bold text-slate-700">
+              <input id="idea-edit-starred" type="checkbox" class="w-4 h-4 accent-amber-500 rounded">
+              <span class="flex items-center gap-1 text-amber-600"><i class="fa-solid fa-star"></i> 設為星號重點</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+        <button onclick="closeIdeaEditModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">取消</button>
+        <button onclick="submitIdeaEdit()" class="px-5 py-2 text-sm bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-xl shadow-sm">儲存變更</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
