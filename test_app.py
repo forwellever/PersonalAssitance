@@ -121,5 +121,59 @@ class TestFocusFlow(unittest.TestCase):
         # 清理
         database.delete_idea(idea_id)
 
+    def test_user_auth_flow(self):
+        email = "alice_test@example.com"
+        # 1. 發送驗證碼
+        otp_res = database.generate_and_save_otp(email)
+        self.assertTrue(otp_res['success'])
+
+        # 2. 獲取驗證碼
+        otps = database.execute_query("SELECT code FROM email_otps WHERE email = ? AND used = 0 ORDER BY id DESC LIMIT 1;", [email])
+        self.assertTrue(len(otps) > 0)
+        code = otps[0]['code']
+
+        # 3. 驗證登入
+        login_res = database.verify_otp_and_login(email, code)
+        self.assertTrue(login_res['success'])
+        self.assertIsNotNone(login_res.get('token'))
+        token = login_res['token']
+
+        # 4. 透過 Token 取得使用者資訊
+        user = database.get_user_by_token(token)
+        self.assertIsNotNone(user)
+        self.assertEqual(user['email'], email)
+
+        # 5. 重複使用同一驗證碼應失敗
+        second_login = database.verify_otp_and_login(email, code)
+        self.assertFalse(second_login['success'])
+
+        # 6. 登出
+        database.delete_session(token)
+        user_after_logout = database.get_user_by_token(token)
+        self.assertIsNone(user_after_logout)
+
+    def test_multi_user_isolation(self):
+        u1 = database.get_or_create_user("user_a@example.com")
+        u2 = database.get_or_create_user("user_b@example.com")
+
+        t1_id = database.create_task({"title": "User A 報告", "category": "報告"}, user_id=u1['id'])
+        t2_id = database.create_task({"title": "User B 簡報", "category": "簡報"}, user_id=u2['id'])
+
+        u1_tasks = database.get_all_tasks(user_id=u1['id'])
+        u2_tasks = database.get_all_tasks(user_id=u2['id'])
+
+        u1_titles = [t['title'] for t in u1_tasks]
+        u2_titles = [t['title'] for t in u2_tasks]
+
+        self.assertIn("User A 報告", u1_titles)
+        self.assertNotIn("User B 簡報", u1_titles)
+
+        self.assertIn("User B 簡報", u2_titles)
+        self.assertNotIn("User A 報告", u2_titles)
+
+        # 清理
+        database.delete_task(t1_id, user_id=u1['id'])
+        database.delete_task(t2_id, user_id=u2['id'])
+
 if __name__ == '__main__':
     unittest.main()

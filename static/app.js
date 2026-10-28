@@ -1,5 +1,6 @@
 /**
  * FocusFlow Client Application Logic
+ * Supports Multi-User personal isolation and Email + OTP authentication.
  */
 
 const DEFAULT_CATEGORIES = [
@@ -12,6 +13,8 @@ const DEFAULT_CATEGORIES = [
 
 let currentTab = 'dashboard';
 let state = {
+  currentUser: null,
+  authToken: localStorage.getItem('focusflow_token') || '',
   tasks: [],
   ideas: [],
   categories: [...DEFAULT_CATEGORIES],
@@ -25,11 +28,208 @@ let state = {
 // Web Speech Recognition
 let recognition = null;
 let isRecording = false;
+let otpCooldownTimer = null;
 
 document.addEventListener('DOMContentLoaded', () => {
-  initSpeechRecognition();
-  refreshData();
+  checkAuthAndInit();
 });
+
+// ----------------- Auth Management -----------------
+async function authFetch(url, options = {}) {
+  options.headers = options.headers || {};
+  if (state.authToken) {
+    options.headers['Authorization'] = `Bearer ${state.authToken}`;
+  }
+
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    localStorage.removeItem('focusflow_token');
+    state.authToken = '';
+    state.currentUser = null;
+    showLoginModal();
+    showToast('登入階段已逾期或無效，請重新登入', 'warning');
+    throw new Error('Unauthorized');
+  }
+  return res;
+}
+
+function showLoginModal() {
+  document.getElementById('login-modal').classList.remove('hidden');
+  document.getElementById('user-profile-widget').classList.add('hidden');
+}
+
+function hideLoginModal() {
+  document.getElementById('login-modal').classList.add('hidden');
+  document.getElementById('user-profile-widget').classList.remove('hidden');
+}
+
+async function checkAuthAndInit() {
+  initSpeechRecognition();
+  const savedToken = localStorage.getItem('focusflow_token');
+  if (!savedToken) {
+    showLoginModal();
+    return;
+  }
+
+  state.authToken = savedToken;
+  try {
+    const res = await authFetch('/api/auth/me');
+    const json = await res.json();
+    if (json.success && json.user) {
+      state.currentUser = json.user;
+      updateUserProfileUI(json.user);
+      hideLoginModal();
+      refreshData();
+      return;
+    }
+  } catch (err) {
+    console.warn('Auth check failed:', err);
+  }
+
+  showLoginModal();
+}
+
+function updateUserProfileUI(user) {
+  const emailEl = document.getElementById('user-email-display');
+  const initialEl = document.getElementById('user-avatar-initial');
+  if (emailEl) emailEl.innerText = user.email || 'User';
+  if (initialEl) initialEl.innerText = (user.email || 'U')[0].toUpperCase();
+}
+
+async function handleSendOtp() {
+  const emailInput = document.getElementById('login-input-email');
+  const email = emailInput.value.trim();
+  if (!email || !email.includes('@')) {
+    showToast('請輸入正確的電子信箱 (Email)', 'warning');
+    emailInput.focus();
+    return;
+  }
+
+  const btn = document.getElementById('btn-send-otp');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 發送中...';
+
+  try {
+    const res = await fetch('/api/auth/send-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const json = await res.json();
+    if (json.success) {
+      showToast(json.message || '動態確認碼已發送！', 'success');
+      
+      // 開發/測試模式下，直接顯示產生的確認碼以便立即登入
+      if (json.dev_code) {
+        document.getElementById('dev-otp-hint').classList.remove('hidden');
+        document.getElementById('dev-otp-code').innerText = json.dev_code;
+      } else {
+        document.getElementById('dev-otp-hint').classList.add('hidden');
+      }
+
+      // 60 秒倒數計時防重複點擊
+      let countdown = 60;
+      clearInterval(otpCooldownTimer);
+      btn.innerText = `重新發送 (${countdown}s)`;
+      otpCooldownTimer = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(otpCooldownTimer);
+          btn.disabled = false;
+          btn.innerText = '發送確認碼';
+        } else {
+          btn.innerText = `重新發送 (${countdown}s)`;
+        }
+      }, 1000);
+
+      document.getElementById('login-input-code').focus();
+    } else {
+      btn.disabled = false;
+      btn.innerText = '發送確認碼';
+      showToast(json.error || '發送失敗，請稍後重試', 'error');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerText = '發送確認碼';
+    showToast('發送失敗：' + err.message, 'error');
+  }
+}
+
+function autoFillOtp() {
+  const code = document.getElementById('dev-otp-code').innerText.trim();
+  if (code) {
+    document.getElementById('login-input-code').value = code;
+    showToast('已為您帶入確認碼！', 'info');
+  }
+}
+
+async function handleVerifyAndLogin() {
+  const email = document.getElementById('login-input-email').value.trim();
+  const code = document.getElementById('login-input-code').value.trim();
+
+  if (!email || !code) {
+    showToast('請輸入 Email 與 6 位數確認碼', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btn-login-submit');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 驗證登入中...';
+
+  try {
+    const res = await fetch('/api/auth/verify-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code })
+    });
+    const json = await res.json();
+    if (json.success && json.token) {
+      state.authToken = json.token;
+      state.currentUser = json.user;
+      localStorage.setItem('focusflow_token', json.token);
+      
+      updateUserProfileUI(json.user);
+      hideLoginModal();
+      showToast(`登入成功！歡迎回來，${json.user.email}`, 'success');
+
+      document.getElementById('login-input-code').value = '';
+      document.getElementById('dev-otp-hint').classList.add('hidden');
+
+      await refreshData();
+    } else {
+      showToast(json.error || '驗證失敗，請確認確認碼是否正確', 'error');
+    }
+  } catch (err) {
+    showToast('登入失敗：' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> 驗證並登入系統';
+  }
+}
+
+async function logout() {
+  if (!confirm('確定要登出目前帳號嗎？')) return;
+  try {
+    if (state.authToken) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${state.authToken}` }
+      });
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+
+  localStorage.removeItem('focusflow_token');
+  state.authToken = '';
+  state.currentUser = null;
+  state.tasks = [];
+  state.ideas = [];
+  state.businessLogs = [];
+
+  showLoginModal();
+  showToast('您已安全登出系統', 'info');
+}
 
 // ----------------- Tab Navigation -----------------
 function switchTab(tabName) {
@@ -57,6 +257,7 @@ function triggerQuickVoice() {
 
 // ----------------- Global Refresh -----------------
 async function refreshData() {
+  if (!state.authToken) return;
   await Promise.all([
     loadStats(),
     loadCategories(),
@@ -64,12 +265,12 @@ async function refreshData() {
     loadIdeas(),
     loadBusinessLogs()
   ]);
-  showToast('資料已同步更新', 'info');
+  showToast('個人任務與資料已同步', 'info');
 }
 
 async function loadStats() {
   try {
-    const res = await fetch('/api/stats');
+    const res = await authFetch('/api/stats');
     const json = await res.json();
     if (json.success) {
       state.stats = json.data;
@@ -87,7 +288,7 @@ async function loadStats() {
 // ----------------- Categories Management -----------------
 async function loadCategories() {
   try {
-    const res = await fetch('/api/categories');
+    const res = await authFetch('/api/categories');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -96,7 +297,7 @@ async function loadCategories() {
       fallbackCategories();
     }
   } catch (err) {
-    console.warn('API /api/categories 尚未回應，啟用既有類別保護備援機制:', err);
+    console.warn('API /api/categories 載入提示，啟用備援預設:', err);
     fallbackCategories();
   }
   populateCategoryDropdowns();
@@ -107,7 +308,6 @@ function fallbackCategories() {
   if (!state.categories || state.categories.length === 0) {
     state.categories = [...DEFAULT_CATEGORIES];
   }
-  // 保障從既有任務中擷取類別，絕不丟失任何正在使用的類別
   const existingNames = new Set(state.categories.map(c => c.name));
   if (state.tasks && state.tasks.length > 0) {
     state.tasks.forEach(t => {
@@ -130,19 +330,16 @@ function populateCategoryDropdowns() {
   if (convertSelect) convertSelect.innerHTML = '';
 
   state.categories.forEach(cat => {
-    // filter
     const optFilter = document.createElement('option');
     optFilter.value = cat.name;
     optFilter.textContent = cat.name;
     filterSelect.appendChild(optFilter);
 
-    // task modal
     const optInput = document.createElement('option');
     optInput.value = cat.name;
     optInput.textContent = cat.name;
     taskInputSelect.appendChild(optInput);
 
-    // convert modal
     if (convertSelect) {
       const optConv = document.createElement('option');
       optConv.value = cat.name;
@@ -218,7 +415,7 @@ async function saveNewCategory() {
   }
 
   try {
-    const res = await fetch('/api/categories', {
+    const res = await authFetch('/api/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, color })
@@ -230,14 +427,10 @@ async function saveNewCategory() {
       await loadCategories();
       renderTasks();
     } else {
-      if (json.error && json.error.includes('Endpoint not found')) {
-        alert('【伺服器需要重啟提醒】\n\n您終端機中的舊版 Python 伺服器正在運行中，尚未加載新增的類別 API 端點。\n\n請在終端機中按【Ctrl + C】停止服務，再重新執行【./run.sh】，然後重新整理頁面即可正常新增自訂類別！');
-      } else {
-        showToast(json.error || '新增失敗', 'error');
-      }
+      showToast(json.error || '新增失敗', 'error');
     }
   } catch (err) {
-    alert('【伺服器需要重啟提醒】\n\n後端 API 尚未更新，請在終端機中按【Ctrl + C】停止服務，再重新執行【./run.sh】，即可啟用類別管理！');
+    showToast('新增失敗：' + err.message, 'error');
   }
 }
 
@@ -246,7 +439,7 @@ async function editCategory(id, currentName, currentColor) {
   if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
 
   try {
-    const res = await fetch(`/api/categories/${id}`, {
+    const res = await authFetch(`/api/categories/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName.trim(), color: currentColor })
@@ -257,14 +450,10 @@ async function editCategory(id, currentName, currentColor) {
       await loadCategories();
       await loadTasks();
     } else {
-      if (json.error && json.error.includes('Endpoint not found')) {
-        alert('請在終端機按 Ctrl + C 後重啟 ./run.sh 以載入新 API 端點！');
-      } else {
-        showToast(json.error || '修改失敗', 'error');
-      }
+      showToast(json.error || '修改失敗', 'error');
     }
   } catch (err) {
-    alert('後端尚未載入修改 API，請在終端機重啟 ./run.sh！');
+    showToast('修改失敗：' + err.message, 'error');
   }
 }
 
@@ -272,28 +461,24 @@ async function deleteCategory(id, name) {
   if (!confirm(`確定要刪除類別「${name}」嗎？\n該類別下的任務將自動轉移至「其他」。`)) return;
 
   try {
-    const res = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/categories/${id}`, { method: 'DELETE' });
     const json = await res.json();
     if (json.success) {
       showToast(`類別「${name}」已刪除`, 'info');
       await loadCategories();
       await loadTasks();
     } else {
-      if (json.error && json.error.includes('Endpoint not found')) {
-        alert('請在終端機按 Ctrl + C 後重啟 ./run.sh 以載入新 API 端點！');
-      } else {
-        showToast(json.error || '刪除失敗', 'error');
-      }
+      showToast(json.error || '刪除失敗', 'error');
     }
   } catch (err) {
-    alert('後端尚未載入刪除 API，請在終端機重啟 ./run.sh！');
+    showToast('刪除失敗：' + err.message, 'error');
   }
 }
 
 // ----------------- A. Tasks Management -----------------
 async function loadTasks() {
   try {
-    const res = await fetch('/api/tasks');
+    const res = await authFetch('/api/tasks');
     const json = await res.json();
     if (json.success) {
       state.tasks = json.data;
@@ -304,7 +489,6 @@ async function loadTasks() {
   }
 }
 
-// 計算建議進度（根據建立時間與截止時間推算）
 function calculateRecommendedProgress(createdAt, dueDate) {
   if (!dueDate) return null;
   const now = new Date().getTime();
@@ -353,7 +537,6 @@ function renderTasks() {
     colEl.appendChild(createTaskCard(task));
   });
 
-  // Update count badges
   Object.keys(counts).forEach(k => {
     const badge = document.getElementById(`count-${k}`);
     if (badge) badge.innerText = counts[k];
@@ -364,7 +547,6 @@ function createTaskCard(task) {
   const card = document.createElement('div');
   card.className = "task-card bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm space-y-3 cursor-default";
 
-  // Category Badge Color
   const catObj = state.categories.find(c => c.name === task.category);
   const colorMap = {
     indigo: "bg-indigo-50 text-indigo-700 border-indigo-100",
@@ -377,7 +559,6 @@ function createTaskCard(task) {
   };
   const catClass = (catObj && colorMap[catObj.color]) || "bg-indigo-50 text-indigo-700 border-indigo-100";
 
-  // Priority indicator
   const priorityIcons = {
     urgent: '<span class="text-xs text-rose-600 font-bold"><i class="fa-solid fa-fire"></i> 緊急</span>',
     high: '<span class="text-xs text-orange-500 font-bold"><i class="fa-solid fa-angles-up"></i> 高</span>',
@@ -385,7 +566,6 @@ function createTaskCard(task) {
     low: '<span class="text-xs text-emerald-500 font-bold"><i class="fa-solid fa-angle-down"></i> 低</span>'
   };
 
-  // Due date check
   let dueHtml = '';
   if (task.due_date) {
     const dueDate = new Date(task.due_date);
@@ -397,13 +577,11 @@ function createTaskCard(task) {
     `;
   }
 
-  // Next status options
   const statusFlow = ['pending', 'in_progress', 'review', 'completed'];
   const currentIndex = statusFlow.indexOf(task.status);
   const nextStatus = currentIndex < statusFlow.length - 1 ? statusFlow[currentIndex + 1] : null;
   const prevStatus = currentIndex > 0 ? statusFlow[currentIndex - 1] : null;
 
-  // Calculate recommended progress
   const rec = calculateRecommendedProgress(task.created_at, task.due_date);
 
   card.innerHTML = `
@@ -463,13 +641,11 @@ function createTaskCard(task) {
   return card;
 }
 
-// 即時拖拉更新顯示數值
 function onDragProgress(taskId, value) {
   const el = document.getElementById(`progress-val-${taskId}`);
   if (el) el.innerText = `${value}%`;
 }
 
-// 放開滑桿時即時寫入後端
 async function quickUpdateProgress(taskId, value) {
   const val = parseInt(value, 10);
   const task = state.tasks.find(t => t.id === taskId);
@@ -483,7 +659,7 @@ async function quickUpdateProgress(taskId, value) {
   }
 
   try {
-    await fetch(`/api/tasks/${taskId}`, {
+    await authFetch(`/api/tasks/${taskId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ progress: val, status: newStatus })
@@ -547,7 +723,7 @@ async function saveTaskFromModal() {
 
   try {
     if (editId) {
-      await fetch(`/api/tasks/${editId}`, {
+      await authFetch(`/api/tasks/${editId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -555,7 +731,7 @@ async function saveTaskFromModal() {
       showToast('任務已成功更新', 'success');
     } else {
       payload.status = 'pending';
-      await fetch('/api/tasks', {
+      await authFetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -579,7 +755,7 @@ async function updateTaskStatus(id, newStatus) {
   try {
     const task = state.tasks.find(t => t.id === id);
     const progress = newStatus === 'completed' ? 100 : (task.progress === 100 ? 50 : task.progress);
-    await fetch(`/api/tasks/${id}`, {
+    await authFetch(`/api/tasks/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus, progress })
@@ -595,7 +771,7 @@ async function updateTaskStatus(id, newStatus) {
 async function deleteTask(id) {
   if (!confirm('確定要刪除此任務嗎？')) return;
   try {
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    await authFetch(`/api/tasks/${id}`, { method: 'DELETE' });
     await loadTasks();
     loadStats();
     showToast('任務已刪除', 'info');
@@ -607,7 +783,7 @@ async function deleteTask(id) {
 // ----------------- B. Ideas Management -----------------
 async function loadIdeas() {
   try {
-    const res = await fetch('/api/ideas');
+    const res = await authFetch('/api/ideas');
     const json = await res.json();
     if (json.success) {
       state.ideas = json.data;
@@ -674,7 +850,7 @@ async function saveIdea() {
   };
 
   try {
-    await fetch('/api/ideas', {
+    await authFetch('/api/ideas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -811,7 +987,7 @@ async function submitIdeaEdit() {
   }
 
   try {
-    const res = await fetch(`/api/ideas/${id}`, {
+    const res = await authFetch(`/api/ideas/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, content, tags, is_starred })
@@ -830,7 +1006,7 @@ async function submitIdeaEdit() {
 
 async function toggleStarIdea(id, newState) {
   try {
-    await fetch(`/api/ideas/${id}`, {
+    await authFetch(`/api/ideas/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_starred: newState })
@@ -845,7 +1021,7 @@ async function toggleStarIdea(id, newState) {
 async function deleteIdea(id) {
   if (!confirm('確定要刪除這則靈感便籤嗎？')) return;
   try {
-    await fetch(`/api/ideas/${id}`, { method: 'DELETE' });
+    await authFetch(`/api/ideas/${id}`, { method: 'DELETE' });
     await loadIdeas();
     loadStats();
     showToast('便籤已刪除', 'info');
@@ -877,7 +1053,7 @@ async function submitIdeaConversion() {
   }
 
   try {
-    const res = await fetch(`/api/ideas/${ideaId}/convert`, {
+    const res = await authFetch(`/api/ideas/${ideaId}/convert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, category, due_date: dueDate })
@@ -1002,7 +1178,7 @@ async function analyzeMeetingText() {
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> AI 萃取與解析中...';
 
   try {
-    const res = await fetch('/api/business/analyze', {
+    const res = await authFetch('/api/business/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text })
@@ -1062,7 +1238,7 @@ async function saveCurrentMeetingLog() {
   }
 
   try {
-    await fetch('/api/business', {
+    await authFetch('/api/business', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.currentAnalysis)
@@ -1077,7 +1253,7 @@ async function saveCurrentMeetingLog() {
 
 async function loadBusinessLogs() {
   try {
-    const res = await fetch('/api/business');
+    const res = await authFetch('/api/business');
     const json = await res.json();
     if (json.success) {
       state.businessLogs = json.data;
@@ -1150,7 +1326,7 @@ function renderBusinessLogs() {
 async function deleteBusinessLog(id) {
   if (!confirm('確定要刪除這筆業務紀錄嗎？')) return;
   try {
-    await fetch(`/api/business/${id}`, { method: 'DELETE' });
+    await authFetch(`/api/business/${id}`, { method: 'DELETE' });
     await loadBusinessLogs();
     loadStats();
     showToast('紀錄已刪除', 'info');

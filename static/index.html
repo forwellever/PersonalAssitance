@@ -41,12 +41,23 @@
         </button>
       </nav>
 
-      <!-- Quick Action Button -->
-      <div class="flex items-center gap-2">
-        <button onclick="triggerQuickVoice()" class="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-rose-100 hover:shadow-md">
+      <!-- User Profile & Action Buttons -->
+      <div class="flex items-center gap-3">
+        <button onclick="triggerQuickVoice()" class="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-3 py-2 rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-rose-100 hover:shadow-md">
           <i class="fa-solid fa-microphone"></i>
           <span class="hidden sm:inline">語音速記</span>
         </button>
+
+        <!-- Logged-in User Badge -->
+        <div id="user-profile-widget" class="hidden flex items-center gap-2 pl-2 border-l border-slate-200">
+          <div class="flex items-center gap-2 bg-slate-100 py-1 px-2.5 rounded-xl text-xs">
+            <div class="w-6 h-6 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-[11px]" id="user-avatar-initial">U</div>
+            <span id="user-email-display" class="font-medium text-slate-700 max-w-[130px] truncate">user@email</span>
+          </div>
+          <button onclick="logout()" title="登出帳號" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition text-xs">
+            <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -415,6 +426,60 @@
   </main>
 
   <!-- ================= MODALS ================= -->
+  <!-- 0. Email + OTP Login Overlay Modal -->
+  <div id="login-modal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl border border-slate-100 space-y-6">
+      <div class="text-center space-y-2">
+        <div class="w-14 h-14 rounded-2xl bg-indigo-600 text-white mx-auto flex items-center justify-center text-2xl shadow-lg shadow-indigo-200">
+          <i class="fa-solid fa-bolt"></i>
+        </div>
+        <h2 class="text-2xl font-extrabold text-slate-900">登入 FocusFlow</h2>
+        <p class="text-xs text-slate-500">多人工作追蹤與個人任務排程系統</p>
+      </div>
+
+      <!-- Login Form -->
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1.5">電子信箱 (Email) *</label>
+          <div class="relative">
+            <i class="fa-regular fa-envelope absolute left-3.5 top-3 text-slate-400 text-sm"></i>
+            <input id="login-input-email" type="email" placeholder="name@company.com" class="w-full pl-10 pr-28 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition">
+            <button id="btn-send-otp" onclick="handleSendOtp()" class="absolute right-1.5 top-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs whitespace-nowrap">
+              發送確認碼
+            </button>
+          </div>
+        </div>
+
+        <!-- Dev Mode OTP quick preview hint -->
+        <div id="dev-otp-hint" class="hidden p-3 bg-amber-50 border border-amber-200/80 rounded-xl text-xs space-y-1">
+          <div class="flex items-center justify-between font-bold text-amber-800">
+            <span><i class="fa-solid fa-key"></i> 測試確認碼 (未設定 SMTP 模式)</span>
+            <button onclick="autoFillOtp()" class="text-indigo-600 underline text-[11px] hover:text-indigo-800">一鍵帶入</button>
+          </div>
+          <p class="text-slate-600 text-[11px]">確認碼為：<strong id="dev-otp-code" class="text-amber-700 text-sm tracking-widest font-mono">123456</strong></p>
+        </div>
+
+        <!-- Step 2: Input OTP -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1.5">Email 動態確認碼 (6 位數) *</label>
+          <div class="relative">
+            <i class="fa-solid fa-shield-halved absolute left-3.5 top-3.5 text-slate-400 text-sm"></i>
+            <input id="login-input-code" type="text" maxlength="6" placeholder="請輸入 6 位數確認碼" class="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none tracking-widest font-mono transition text-base">
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">確認碼有效時間為 10 分鐘，未收到可重新發送</p>
+        </div>
+
+        <button id="btn-login-submit" onclick="handleVerifyAndLogin()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md shadow-indigo-100 transition-all flex items-center justify-center gap-2">
+          <i class="fa-solid fa-arrow-right-to-bracket"></i> 驗證並登入系統
+        </button>
+      </div>
+
+      <div class="text-center pt-2 border-t border-slate-100 text-[11px] text-slate-400">
+        登入後系統將自動載入您的個人專屬任務、靈感與行事曆排程
+      </div>
+    </div>
+  </div>
+
   <!-- 1. Task Modal (Add/Edit) -->
   <div id="task-modal" class="hidden fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
