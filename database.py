@@ -6,7 +6,7 @@ import os
 import json
 import sqlite3
 from datetime import datetime
-import libsql_client
+import libsql_experimental as libsql
 
 # Prefer env-provided Turso settings. If the deployment does not configure them,
 # fall back to a local SQLite database instead of hanging on a remote connection.
@@ -51,13 +51,14 @@ def get_client():
         return _client
 
     try:
-        if url.startswith("libsql://"):
-            url = url.replace("libsql://", "https://", 1)
-        _client = libsql_client.create_client_sync(url=url, auth_token=token)
+        # libsql-experimental 原生支援 libsql:// 與 https://，直接連線即可
+        _client = libsql.connect(url, auth_token=token)
         return _client
-    except Exception:
-        _client = "sqlite"
-        return _client
+    except Exception as e:
+        print(f"Turso 連線失敗，錯誤訊息：{e}")
+        # 若連線失敗，退回使用本地的 SQLite 檔案
+        import sqlite3
+        return sqlite3.connect("focusflow.db")
 
 
 def execute_query(sql, params=None):
