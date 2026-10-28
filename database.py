@@ -13,9 +13,30 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 import libsql_client
 
-# Prefer env-provided Turso settings. If not set, fall back to SQLite.
-TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
-TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
+# 自動讀取 .env 檔案（無論直接使用 python3 app.py 或 ./run.sh 都能自動生效）
+def load_dotenv():
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+        except Exception:
+            pass
+
+load_dotenv()
+
+DEFAULT_TURSO_URL = "libsql://myapp1-forwellever.aws-ap-northeast-1.turso.io"
+DEFAULT_TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTMxNTgyMjIsImlkIjoiMDFhMTgwODktM2QwMS03YzE1LTlkMDgtYzU2NjIyYTY2ZjM2Iiwia2lkIjoiYTNra1BNQ0lSd09VWW1wbVpyMlZ2SW1IOGRpcnltVnJLSEZwcXZGbTU0NCIsInJpZCI6IjNkZTkwY2QzLTY5MWEtNDNlYy04ODBhLTgyYTRmN2Q0ODBmZCJ9.M5nHv6hsCh1_05bw8ca6hZFKMOWDarHAYuzuuhQPu2tRdx7kpXQGTnPt3Os7hotRC-HfFOZ2pdZrAIeq-5V6Bg"
+
+TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL", DEFAULT_TURSO_URL)
+TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", DEFAULT_TURSO_TOKEN)
 SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "focusflow.db")
 
 _client = None
