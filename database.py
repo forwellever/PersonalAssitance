@@ -8,59 +8,86 @@ import sqlite3
 from datetime import datetime
 import libsql_client
 
-# Turso Cloud DB Credentials
-TURSO_DATABASE_URL = os.environ.get(
-    "TURSO_DATABASE_URL",
-    "libsql://myapp1-forwellever.aws-ap-northeast-1.turso.io"
-)
-TURSO_AUTH_TOKEN = os.environ.get(
-    "TURSO_AUTH_TOKEN",
-    "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTMxNTgyMjIsImlkIjoiMDFhMTgwODktM2QwMS03YzE1LTlkMDgtYzU2NjIyYTY2ZjM2Iiwia2lkIjoiYTNra1BNQ0lSd09VWW1wbVpyMlZ2SW1IOGRpcnltVnJLSEZwcXZGbTU0NCIsInJpZCI6IjNkZTkwY2QzLTY5MWEtNDNlYy04ODBhLTgyYTRmN2Q0ODBmZCJ9.M5nHv6hsCh1_05bw8ca6hZFKMOWDarHAYuzuuhQPu2tRdx7kpXQGTnPt3Os7hotRC-HfFOZ2pdZrAIeq-5V6Bg"
-)
+# Prefer env-provided Turso settings. If the deployment does not configure them,
+# fall back to a local SQLite database instead of hanging on a remote connection.
+TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
+SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "focusflow.db")
 
 _client = None
 
+
+def _sqlite_execute(sql, params=None):
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, list(params) if params else [])
+        if sql.strip().lower().startswith("select") or sql.strip().lower().startswith("pragma"):
+            cols = [d[0] for d in cur.description] if cur.description else []
+            rows = cur.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        conn.commit()
+        result = type("SQLiteResult", (), {"last_insert_rowid": cur.lastrowid, "rowcount": cur.rowcount})()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_client():
-    """Returns an active, synchronized Turso LibSQL client instance."""
+    """Returns the active database client or a SQLite fallback marker."""
     global _client
-    if _client is None:
-        url = os.environ.get("TURSO_DATABASE_URL", TURSO_DATABASE_URL)
-        token = os.environ.get("TURSO_AUTH_TOKEN", TURSO_AUTH_TOKEN)
-        
-        # libsql_client sync client connects over HTTPS reliably
+    if _client is not None:
+        return _client
+
+    url = os.environ.get("TURSO_DATABASE_URL", TURSO_DATABASE_URL)
+    token = os.environ.get("TURSO_AUTH_TOKEN", TURSO_AUTH_TOKEN)
+
+    if not url or not token:
+        _client = "sqlite"
+        return _client
+
+    try:
         if url.startswith("libsql://"):
             url = url.replace("libsql://", "https://", 1)
-            
         _client = libsql_client.create_client_sync(url=url, auth_token=token)
-    return _client
+        return _client
+    except Exception:
+        _client = "sqlite"
+        return _client
+
 
 def execute_query(sql, params=None):
     """Executes a SELECT query and returns rows as list of dicts."""
     client = get_client()
+    if client == "sqlite":
+        return _sqlite_execute(sql, params)
+
     try:
         res = client.execute(sql, list(params) if params else [])
         cols = res.columns
         return [dict(zip(cols, row)) for row in res.rows]
-    except Exception as e:
-        # Reconnect on connection drop
+    except Exception:
         global _client
-        _client = None
-        client = get_client()
-        res = client.execute(sql, list(params) if params else [])
-        cols = res.columns
-        return [dict(zip(cols, row)) for row in res.rows]
+        _client = "sqlite"
+        return _sqlite_execute(sql, params)
+
 
 def execute_mutate(sql, params=None):
     """Executes an INSERT, UPDATE, or DELETE and returns the ResultSet."""
     client = get_client()
+    if client == "sqlite":
+        return _sqlite_execute(sql, params)
+
     try:
         return client.execute(sql, list(params) if params else [])
-    except Exception as e:
-        # Reconnect on connection drop
+    except Exception:
         global _client
-        _client = None
-        client = get_client()
-        return client.execute(sql, list(params) if params else [])
+        _client = "sqlite"
+        return _sqlite_execute(sql, params)
 
 def init_db():
     """Initializes tables in Turso Cloud DB and auto-migrates existing data if needed."""
