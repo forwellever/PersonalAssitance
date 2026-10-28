@@ -1,0 +1,15 @@
+# Python 快取
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虛擬環境
+venv/
+.env
+env/
+
+# 本地資料庫與密鑰
+*.db
+*.sqlite3
+.env*
+.DS_Store
