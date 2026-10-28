@@ -55,7 +55,7 @@ python3 app.py
 ---
 
 ## 🛠️ 技術架構
-- **後端**：Python 3 (標準函式庫 `http.server`, `sqlite3`, `re`, `json`)，零額外外部依賴，秒開且穩定。
+- **後端**：Python 3 (REST API 輕量伺服器，整合 `libsql_client`、`re`、`json`)。
 - **前端**：響應式 Web 應用程式 (HTML5 + Tailwind CSS + Web Audio / Web Speech API)。
-- **資料庫**：SQLite 本地輕量持久化 (`focusflow.db`)。
+- **資料庫**：**Turso Cloud DB (LibSQL)** 雲端分散式資料庫，支援跨裝置即時同步與雲端高可用性（亦支援環境變數 `.env` 配置）。
 - **排程協定**：Google Calendar Template URL Protocol + iCalendar RFC 5545。

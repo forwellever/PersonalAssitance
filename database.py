@@ -1,106 +1,222 @@
 """
-FocusFlow Database Module
-SQLite-based persistent storage for Tasks, Ideas, and Business Meeting Logs.
+FocusFlow Database Module (Turso Cloud DB / LibSQL Version)
+Connects to Turso distributed LibSQL cloud database for real-time synchronization.
 """
-import sqlite3
-import json
 import os
+import json
+import sqlite3
 from datetime import datetime
+import libsql_client
 
-DB_FILE = os.path.join(os.path.dirname(__file__), "focusflow.db")
+# Turso Cloud DB Credentials
+TURSO_DATABASE_URL = os.environ.get(
+    "TURSO_DATABASE_URL",
+    "libsql://myapp1-forwellever.aws-ap-northeast-1.turso.io"
+)
+TURSO_AUTH_TOKEN = os.environ.get(
+    "TURSO_AUTH_TOKEN",
+    "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTMxNTgyMjIsImlkIjoiMDFhMTgwODktM2QwMS03YzE1LTlkMDgtYzU2NjIyYTY2ZjM2Iiwia2lkIjoiYTNra1BNQ0lSd09VWW1wbVpyMlZ2SW1IOGRpcnltVnJLSEZwcXZGbTU0NCIsInJpZCI6IjNkZTkwY2QzLTY5MWEtNDNlYy04ODBhLTgyYTRmN2Q0ODBmZCJ9.M5nHv6hsCh1_05bw8ca6hZFKMOWDarHAYuzuuhQPu2tRdx7kpXQGTnPt3Os7hotRC-HfFOZ2pdZrAIeq-5V6Bg"
+)
 
-def get_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+_client = None
+
+def get_client():
+    """Returns an active, synchronized Turso LibSQL client instance."""
+    global _client
+    if _client is None:
+        url = os.environ.get("TURSO_DATABASE_URL", TURSO_DATABASE_URL)
+        token = os.environ.get("TURSO_AUTH_TOKEN", TURSO_AUTH_TOKEN)
+        
+        # libsql_client sync client connects over HTTPS reliably
+        if url.startswith("libsql://"):
+            url = url.replace("libsql://", "https://", 1)
+            
+        _client = libsql_client.create_client_sync(url=url, auth_token=token)
+    return _client
+
+def execute_query(sql, params=None):
+    """Executes a SELECT query and returns rows as list of dicts."""
+    client = get_client()
+    try:
+        res = client.execute(sql, list(params) if params else [])
+        cols = res.columns
+        return [dict(zip(cols, row)) for row in res.rows]
+    except Exception as e:
+        # Reconnect on connection drop
+        global _client
+        _client = None
+        client = get_client()
+        res = client.execute(sql, list(params) if params else [])
+        cols = res.columns
+        return [dict(zip(cols, row)) for row in res.rows]
+
+def execute_mutate(sql, params=None):
+    """Executes an INSERT, UPDATE, or DELETE and returns the ResultSet."""
+    client = get_client()
+    try:
+        return client.execute(sql, list(params) if params else [])
+    except Exception as e:
+        # Reconnect on connection drop
+        global _client
+        _client = None
+        client = get_client()
+        return client.execute(sql, list(params) if params else [])
 
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    # Table A: 靜態工作 (Static / Deliverable Tasks)
-    cursor.execute("""
+    """Initializes tables in Turso Cloud DB and auto-migrates existing data if needed."""
+    # 1. 建立靜態任務表
+    execute_mutate("""
     CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
-        category TEXT DEFAULT '報告',  -- 報告, 簡報, 資料分析, 系統測試, 其他
-        status TEXT DEFAULT 'pending', -- pending, in_progress, review, completed
-        progress INTEGER DEFAULT 0,    -- 0 to 100
-        priority TEXT DEFAULT 'medium', -- low, medium, high, urgent
-        due_date TEXT,                 -- ISO format YYYY-MM-DD HH:MM
+        category TEXT DEFAULT '報告',
+        status TEXT DEFAULT 'pending',
+        progress INTEGER DEFAULT 0,
+        priority TEXT DEFAULT 'medium',
+        due_date TEXT,
         description TEXT,
-        checklist_json TEXT DEFAULT '[]', -- JSON array of {id, text, done}
+        checklist_json TEXT DEFAULT '[]',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-    )
+    );
     """)
 
-    # Table B: 創意發想 (Ideas & Sparks)
-    cursor.execute("""
+    # 2. 建立靈感庫表
+    execute_mutate("""
     CREATE TABLE IF NOT EXISTS ideas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         content TEXT,
-        tags TEXT DEFAULT '',          -- 逗號分隔標籤
-        color TEXT DEFAULT '#fef3c7',  -- 便籤顏色
-        is_starred INTEGER DEFAULT 0,  -- 0 or 1
-        converted_to_task_id INTEGER,  -- 關聯轉化的 task id
+        tags TEXT DEFAULT '',
+        color TEXT DEFAULT '#fef3c7',
+        is_starred INTEGER DEFAULT 0,
+        converted_to_task_id INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-    )
+    );
     """)
 
-    # Table C: 業務會談與語音記錄 (Business Meetings & Voice Logs)
-    cursor.execute("""
+    # 3. 建立業務會談紀錄表
+    execute_mutate("""
     CREATE TABLE IF NOT EXISTS business_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
-        raw_transcript TEXT NOT NULL,  -- 語音原始文字
-        summary TEXT,                  -- AI 摘要重點
-        action_items_json TEXT DEFAULT '[]', -- 行動清單
-        event_time TEXT,               -- 解析出的關鍵時序 ISO 時間
+        raw_transcript TEXT NOT NULL,
+        summary TEXT,
+        action_items_json TEXT DEFAULT '[]',
+        event_time TEXT,
         duration_minutes INTEGER DEFAULT 60,
-        calendar_status TEXT DEFAULT 'unpushed', -- unpushed, pushed
-        google_calendar_url TEXT,      -- 快速排程 URL
-        client_name TEXT,              -- 客戶/對象
+        calendar_status TEXT DEFAULT 'unpushed',
+        google_calendar_url TEXT,
+        client_name TEXT,
         created_at TEXT NOT NULL
-    )
+    );
     """)
 
-    # Table D: 靜態任務自訂類別 (Task Categories)
-    cursor.execute("""
+    # 4. 建立任務分類表
+    execute_mutate("""
     CREATE TABLE IF NOT EXISTS task_categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         color TEXT DEFAULT 'indigo',
         created_at TEXT NOT NULL
-    )
+    );
     """)
 
-    # 預設類別初始化
-    cursor.execute("SELECT COUNT(*) FROM task_categories")
-    if cursor.fetchone()[0] == 0:
-        default_cats = [
-            ('報告', 'indigo'),
-            ('簡報', 'rose'),
-            ('資料分析', 'amber'),
-            ('系統測試', 'emerald'),
-            ('其他', 'slate')
-        ]
-        now = datetime.now().isoformat()
-        cursor.executemany("INSERT INTO task_categories (name, color, created_at) VALUES (?, ?, ?)",
-                           [(name, color, now) for name, color in default_cats])
+    # 檢查是否需要初始化或從本機 focusflow.db 自動遷移資料
+    cats = execute_query("SELECT COUNT(*) as count FROM task_categories;")
+    cat_count = cats[0]['count'] if cats else 0
 
-    conn.commit()
+    if cat_count == 0:
+        local_db = os.path.join(os.path.dirname(__file__), "focusflow.db")
+        if os.path.exists(local_db):
+            try:
+                migrate_from_local_sqlite(local_db)
+            except Exception as ex:
+                print("⚠️ 本機資料自動遷移略過：", ex)
+                seed_default_categories()
+        else:
+            seed_default_categories()
+
+def seed_default_categories():
+    """Inserts default categories into Turso Cloud DB."""
+    default_cats = [
+        ('報告', 'indigo'),
+        ('簡報', 'rose'),
+        ('資料分析', 'amber'),
+        ('系統測試', 'emerald'),
+        ('其他', 'slate')
+    ]
+    now = datetime.now().isoformat()
+    for name, color in default_cats:
+        execute_mutate(
+            "INSERT INTO task_categories (name, color, created_at) VALUES (?, ?, ?);",
+            [name, color, now]
+        )
+
+def migrate_from_local_sqlite(db_path):
+    """Copies existing records from local SQLite focusflow.db into Turso Cloud DB."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # 1. 遷移類別
+    try:
+        c.execute("SELECT name, color, created_at FROM task_categories;")
+        rows = c.fetchall()
+        for r in rows:
+            execute_mutate(
+                "INSERT OR IGNORE INTO task_categories (name, color, created_at) VALUES (?, ?, ?);",
+                [r['name'], r['color'], r['created_at']]
+            )
+    except Exception:
+        seed_default_categories()
+
+    # 2. 遷移任務
+    try:
+        c.execute("SELECT title, category, status, progress, priority, due_date, description, checklist_json, created_at, updated_at FROM tasks;")
+        for r in c.fetchall():
+            execute_mutate(
+                """INSERT INTO tasks (title, category, status, progress, priority, due_date, description, checklist_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);""",
+                [r['title'], r['category'], r['status'], r['progress'], r['priority'], r['due_date'], r['description'], r['checklist_json'], r['created_at'], r['updated_at']]
+            )
+    except Exception:
+        pass
+
+    # 3. 遷移靈感
+    try:
+        c.execute("SELECT title, content, tags, color, is_starred, converted_to_task_id, created_at, updated_at FROM ideas;")
+        for r in c.fetchall():
+            execute_mutate(
+                """INSERT INTO ideas (title, content, tags, color, is_starred, converted_to_task_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
+                [r['title'], r['content'], r['tags'], r['color'], r['is_starred'], r['converted_to_task_id'], r['created_at'], r['updated_at']]
+            )
+    except Exception:
+        pass
+
+    # 4. 遷移業務會談紀錄
+    try:
+        c.execute("SELECT title, raw_transcript, summary, action_items_json, event_time, duration_minutes, calendar_status, google_calendar_url, client_name, created_at FROM business_logs;")
+        for r in c.fetchall():
+            execute_mutate(
+                """INSERT INTO business_logs (title, raw_transcript, summary, action_items_json, event_time, duration_minutes, calendar_status, google_calendar_url, client_name, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);""",
+                [r['title'], r['raw_transcript'], r['summary'], r['action_items_json'], r['event_time'], r['duration_minutes'], r['calendar_status'], r['google_calendar_url'], r['client_name'], r['created_at']]
+            )
+    except Exception:
+        pass
+
     conn.close()
+    print("✅ 已成功將本機 SQLite 既有資料同步遷移至 Turso Cloud DB！")
 
 # ----------------- Tasks CRUD -----------------
 def get_all_tasks():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tasks ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, due_date ASC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    rows = execute_query("""
+    SELECT * FROM tasks 
+    ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, due_date ASC;
+    """)
     for r in rows:
         try:
             r['checklist'] = json.loads(r.get('checklist_json') or '[]')
@@ -109,14 +225,12 @@ def get_all_tasks():
     return rows
 
 def create_task(data):
-    conn = get_connection()
-    cursor = conn.cursor()
     now = datetime.now().isoformat()
     checklist_str = json.dumps(data.get('checklist', []))
-    cursor.execute("""
+    res = execute_mutate("""
     INSERT INTO tasks (title, category, status, progress, priority, due_date, description, checklist_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    """, [
         data.get('title', '新任務'),
         data.get('category', '報告'),
         data.get('status', 'pending'),
@@ -127,15 +241,10 @@ def create_task(data):
         checklist_str,
         now,
         now
-    ))
-    task_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return task_id
+    ])
+    return res.last_insert_rowid
 
 def update_task(task_id, data):
-    conn = get_connection()
-    cursor = conn.cursor()
     now = datetime.now().isoformat()
     fields = []
     values = []
@@ -150,36 +259,23 @@ def update_task(task_id, data):
     values.append(now)
     values.append(task_id)
 
-    cursor.execute(f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?", values)
-    conn.commit()
-    conn.close()
+    execute_mutate(f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?;", values)
     return True
 
 def delete_task(task_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-    conn.commit()
-    conn.close()
+    execute_mutate("DELETE FROM tasks WHERE id = ?;", [task_id])
     return True
 
 # ----------------- Ideas CRUD -----------------
 def get_all_ideas():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM ideas ORDER BY is_starred DESC, id DESC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
+    return execute_query("SELECT * FROM ideas ORDER BY is_starred DESC, id DESC;")
 
 def create_idea(data):
-    conn = get_connection()
-    cursor = conn.cursor()
     now = datetime.now().isoformat()
-    cursor.execute("""
+    res = execute_mutate("""
     INSERT INTO ideas (title, content, tags, color, is_starred, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
+    VALUES (?, ?, ?, ?, ?, ?, ?);
+    """, [
         data.get('title', '靈光一閃'),
         data.get('content', ''),
         data.get('tags', ''),
@@ -187,15 +283,10 @@ def create_idea(data):
         1 if data.get('is_starred') else 0,
         now,
         now
-    ))
-    idea_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return idea_id
+    ])
+    return res.last_insert_rowid
 
 def update_idea(idea_id, data):
-    conn = get_connection()
-    cursor = conn.cursor()
     now = datetime.now().isoformat()
     fields = []
     values = []
@@ -207,26 +298,16 @@ def update_idea(idea_id, data):
     values.append(now)
     values.append(idea_id)
 
-    cursor.execute(f"UPDATE ideas SET {', '.join(fields)} WHERE id = ?", values)
-    conn.commit()
-    conn.close()
+    execute_mutate(f"UPDATE ideas SET {', '.join(fields)} WHERE id = ?;", values)
     return True
 
 def delete_idea(idea_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM ideas WHERE id = ?", (idea_id,))
-    conn.commit()
-    conn.close()
+    execute_mutate("DELETE FROM ideas WHERE id = ?;", [idea_id])
     return True
 
 # ----------------- Business Logs CRUD -----------------
 def get_all_business_logs():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM business_logs ORDER BY id DESC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    rows = execute_query("SELECT * FROM business_logs ORDER BY id DESC;")
     for r in rows:
         try:
             r['action_items'] = json.loads(r.get('action_items_json') or '[]')
@@ -235,14 +316,12 @@ def get_all_business_logs():
     return rows
 
 def create_business_log(data):
-    conn = get_connection()
-    cursor = conn.cursor()
     now = datetime.now().isoformat()
     action_items_str = json.dumps(data.get('action_items', []))
-    cursor.execute("""
+    res = execute_mutate("""
     INSERT INTO business_logs (title, raw_transcript, summary, action_items_json, event_time, duration_minutes, calendar_status, google_calendar_url, client_name, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    """, [
         data.get('title', '業務洽談紀要'),
         data.get('raw_transcript', ''),
         data.get('summary', ''),
@@ -253,76 +332,44 @@ def create_business_log(data):
         data.get('google_calendar_url', ''),
         data.get('client_name', ''),
         now
-    ))
-    log_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return log_id
+    ])
+    return res.last_insert_rowid
 
 def delete_business_log(log_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM business_logs WHERE id = ?", (log_id,))
-    conn.commit()
-    conn.close()
+    execute_mutate("DELETE FROM business_logs WHERE id = ?;", [log_id])
     return True
 
 # ----------------- Task Categories CRUD -----------------
 def get_all_categories():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM task_categories ORDER BY id ASC")
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
+    return execute_query("SELECT * FROM task_categories ORDER BY id ASC;")
 
 def create_category(data):
-    conn = get_connection()
-    cursor = conn.cursor()
     now = datetime.now().isoformat()
     name = data.get('name', '').strip()
     color = data.get('color', 'indigo')
     if not name:
-        conn.close()
         raise ValueError("Category name cannot be empty")
-    cursor.execute("INSERT INTO task_categories (name, color, created_at) VALUES (?, ?, ?)", (name, color, now))
-    cat_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return cat_id
+    res = execute_mutate("INSERT INTO task_categories (name, color, created_at) VALUES (?, ?, ?);", [name, color, now])
+    return res.last_insert_rowid
 
 def update_category(cat_id, data):
-    conn = get_connection()
-    cursor = conn.cursor()
-    # 獲取原舊名稱以同步更新既有任務
-    cursor.execute("SELECT name FROM task_categories WHERE id = ?", (cat_id,))
-    row = cursor.fetchone()
-    old_name = row['name'] if row else None
+    rows = execute_query("SELECT name FROM task_categories WHERE id = ?;", [cat_id])
+    old_name = rows[0]['name'] if rows else None
 
     name = data.get('name', '').strip()
     color = data.get('color', 'indigo')
     if not name:
-        conn.close()
         raise ValueError("Category name cannot be empty")
 
-    cursor.execute("UPDATE task_categories SET name = ?, color = ? WHERE id = ?", (name, color, cat_id))
+    execute_mutate("UPDATE task_categories SET name = ?, color = ? WHERE id = ?;", [name, color, cat_id])
     if old_name and old_name != name:
-        cursor.execute("UPDATE tasks SET category = ? WHERE category = ?", (name, old_name))
-    conn.commit()
-    conn.close()
+        execute_mutate("UPDATE tasks SET category = ? WHERE category = ?;", [name, old_name])
     return True
 
 def delete_category(cat_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM task_categories WHERE id = ?", (cat_id,))
-    row = cursor.fetchone()
-    if row:
-        cat_name = row['name']
-        # 刪除類別時，將對應任務更新為 '其他'
-        cursor.execute("UPDATE tasks SET category = '其他' WHERE category = ?", (cat_name,))
-        cursor.execute("DELETE FROM task_categories WHERE id = ?", (cat_id,))
-    conn.commit()
-    conn.close()
+    rows = execute_query("SELECT name FROM task_categories WHERE id = ?;", [cat_id])
+    if rows:
+        cat_name = rows[0]['name']
+        execute_mutate("UPDATE tasks SET category = '其他' WHERE category = ?;", [cat_name])
+        execute_mutate("DELETE FROM task_categories WHERE id = ?;", [cat_id])
     return True
-
