@@ -284,12 +284,230 @@ class FocusFlowHandler(http.server.SimpleHTTPRequestHandler):
 
         return self._send_json({"error": "Endpoint not found"}, status_code=404)
 
+class FocusFlowWSGIApp:
+    def __init__(self):
+        database.init_db()
+
+    def _read_json_body(self, environ):
+        try:
+            content_length = int(environ.get('CONTENT_LENGTH', '0') or '0')
+            if content_length <= 0:
+                return {}
+            raw = environ['wsgi.input'].read(content_length)
+            if not raw:
+                return {}
+            return json.loads(raw.decode('utf-8'))
+        except Exception:
+            return {}
+
+    def _send_json(self, payload, status='200 OK'):
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        return status, [('Content-Type', 'application/json; charset=utf-8'), ('Content-Length', str(len(body))), ('Access-Control-Allow-Origin', '*'), ('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS'), ('Access-Control-Allow-Headers', 'Content-Type')], [body]
+
+    def _send_bytes(self, data, status='200 OK', content_type='application/octet-stream', extra_headers=None):
+        headers = [('Content-Type', content_type), ('Content-Length', str(len(data))), ('Access-Control-Allow-Origin', '*')]
+        if extra_headers:
+            headers.extend(extra_headers)
+        return status, headers, [data]
+
+    def __call__(self, environ, start_response):
+        method = environ.get('REQUEST_METHOD', 'GET')
+        path = urllib.parse.urlparse(environ.get('PATH_INFO', '/')).path.rstrip('/')
+        if not path:
+            path = '/'
+
+        if method == 'OPTIONS':
+            status = '200 OK'
+            headers = [('Content-Type', 'application/json; charset=utf-8'), ('Access-Control-Allow-Origin', '*'), ('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS'), ('Access-Control-Allow-Headers', 'Content-Type')]
+            start_response(status, headers)
+            return [b'']
+
+        if method == 'GET':
+            if path == '/api/tasks':
+                status, headers, body = self._send_json({'success': True, 'data': database.get_all_tasks()})
+            elif path == '/api/ideas':
+                status, headers, body = self._send_json({'success': True, 'data': database.get_all_ideas()})
+            elif path == '/api/categories':
+                status, headers, body = self._send_json({'success': True, 'data': database.get_all_categories()})
+            elif path == '/api/business':
+                status, headers, body = self._send_json({'success': True, 'data': database.get_all_business_logs()})
+            elif path == '/api/stats':
+                tasks = database.get_all_tasks()
+                ideas = database.get_all_ideas()
+                logs = database.get_all_business_logs()
+                payload = {
+                    'success': True,
+                    'data': {
+                        'pending_tasks': sum(1 for t in tasks if t['status'] != 'completed'),
+                        'completed_tasks': sum(1 for t in tasks if t['status'] == 'completed'),
+                        'total_ideas': len(ideas),
+                        'starred_ideas': sum(1 for i in ideas if i['is_starred']),
+                        'total_meetings': len(logs),
+                        'scheduled_meetings': sum(1 for l in logs if l.get('event_time')),
+                    }
+                }
+                status, headers, body = self._send_json(payload)
+            elif path == '/' or path == '':
+                file_path = os.path.join(STATIC_DIR, 'index.html')
+                with open(file_path, 'rb') as f:
+                    data = f.read()
+                status, headers, body = self._send_bytes(data, content_type='text/html; charset=utf-8')
+            elif path.startswith('/api/business/') and path.endswith('/ics'):
+                match = re.match(r'^/api/business/(\d+)/ics$', path)
+                if match:
+                    log_id = int(match.group(1))
+                    logs = database.get_all_business_logs()
+                    target_log = next((l for l in logs if l['id'] == log_id), None)
+                    if target_log and target_log.get('event_time'):
+                        try:
+                            dt = datetime.fromisoformat(target_log['event_time'])
+                        except Exception:
+                            dt = datetime.now()
+                        ics_data = calendar_service.generate_ics_content(
+                            title=target_log['title'],
+                            start_dt=dt,
+                            duration_minutes=target_log.get('duration_minutes', 60),
+                            description=target_log.get('summary', '')
+                        ).encode('utf-8')
+                        status, headers, body = self._send_bytes(ics_data, content_type='text/calendar; charset=utf-8', extra_headers=[('Content-Disposition', f'attachment; filename="event_{log_id}.ics"')])
+                    else:
+                        status, headers, body = self._send_json({'error': 'Event time not specified'}, status='400 Bad Request')
+                else:
+                    status, headers, body = self._send_json({'error': 'Endpoint not found'}, status='404 Not Found')
+            else:
+                safe_path = path.lstrip('/')
+                file_path = os.path.normpath(os.path.join(STATIC_DIR, safe_path))
+                if os.path.commonpath([STATIC_DIR, file_path]) == STATIC_DIR and os.path.isfile(file_path):
+                    with open(file_path, 'rb') as f:
+                        data = f.read()
+                    content_type = 'text/html; charset=utf-8' if file_path.endswith('.html') else 'application/javascript; charset=utf-8' if file_path.endswith('.js') else 'text/css; charset=utf-8' if file_path.endswith('.css') else 'image/png' if file_path.endswith('.png') else 'image/jpeg' if file_path.endswith('.jpg') or file_path.endswith('.jpeg') else 'application/octet-stream'
+                    status, headers, body = self._send_bytes(data, content_type=content_type)
+                else:
+                    status, headers, body = self._send_json({'error': 'Endpoint not found'}, status='404 Not Found')
+        elif method == 'POST':
+            body_json = self._read_json_body(environ)
+            if path == '/api/tasks':
+                task_id = database.create_task(body_json)
+                status, headers, body = self._send_json({'success': True, 'id': task_id}, status='201 Created')
+            elif path == '/api/ideas':
+                idea_id = database.create_idea(body_json)
+                status, headers, body = self._send_json({'success': True, 'id': idea_id}, status='201 Created')
+            elif path == '/api/categories':
+                try:
+                    cat_id = database.create_category(body_json)
+                    status, headers, body = self._send_json({'success': True, 'id': cat_id}, status='201 Created')
+                except Exception as exc:
+                    status, headers, body = self._send_json({'error': str(exc)}, status='400 Bad Request')
+            elif re.match(r'^/api/ideas/(\d+)/convert$', path):
+                match = re.match(r'^/api/ideas/(\d+)/convert$', path)
+                idea_id = int(match.group(1))
+                ideas = database.get_all_ideas()
+                target_idea = next((i for i in ideas if i['id'] == idea_id), None)
+                if not target_idea:
+                    status, headers, body = self._send_json({'error': 'Idea not found'}, status='404 Not Found')
+                else:
+                    task_data = {
+                        'title': target_idea['title'],
+                        'category': body_json.get('category', '資料分析'),
+                        'status': 'pending',
+                        'progress': 0,
+                        'priority': body_json.get('priority', 'medium'),
+                        'due_date': body_json.get('due_date', ''),
+                        'description': target_idea.get('content', ''),
+                        'checklist': [{'text': '啟動專案構思', 'done': False}]
+                    }
+                    task_id = database.create_task(task_data)
+                    database.update_idea(idea_id, {'converted_to_task_id': task_id})
+                    status, headers, body = self._send_json({'success': True, 'task_id': task_id})
+            elif path == '/api/business/analyze':
+                raw_text = body_json.get('text', '')
+                analysis = ai_engine.parse_meeting_transcript(raw_text)
+                gcal_url = ''
+                if analysis.get('event_time'):
+                    try:
+                        dt = datetime.strptime(analysis['event_time'], '%Y-%m-%d %H:%M')
+                        gcal_url = calendar_service.generate_google_calendar_url(
+                            title=analysis['title'],
+                            start_dt=dt,
+                            duration_minutes=60,
+                            description=analysis['summary']
+                        )
+                    except Exception as exc:
+                        print('Date parsing error:', exc)
+                analysis['google_calendar_url'] = gcal_url
+                status, headers, body = self._send_json({'success': True, 'data': analysis})
+            elif path == '/api/business':
+                if not body_json.get('google_calendar_url') and body_json.get('event_time'):
+                    try:
+                        dt = datetime.strptime(body_json['event_time'], '%Y-%m-%d %H:%M')
+                        body_json['google_calendar_url'] = calendar_service.generate_google_calendar_url(
+                            title=body_json.get('title', '業務洽談'),
+                            start_dt=dt,
+                            duration_minutes=int(body_json.get('duration_minutes', 60)),
+                            description=body_json.get('summary', '')
+                        )
+                    except Exception:
+                        pass
+                log_id = database.create_business_log(body_json)
+                status, headers, body = self._send_json({'success': True, 'id': log_id}, status='201 Created')
+            else:
+                status, headers, body = self._send_json({'error': 'Endpoint not found'}, status='404 Not Found')
+        elif method == 'PUT':
+            body_json = self._read_json_body(environ)
+            if re.match(r'^/api/tasks/(\d+)$', path):
+                match = re.match(r'^/api/tasks/(\d+)$', path)
+                task_id = int(match.group(1))
+                database.update_task(task_id, body_json)
+                status, headers, body = self._send_json({'success': True})
+            elif re.match(r'^/api/ideas/(\d+)$', path):
+                match = re.match(r'^/api/ideas/(\d+)$', path)
+                idea_id = int(match.group(1))
+                database.update_idea(idea_id, body_json)
+                status, headers, body = self._send_json({'success': True})
+            elif re.match(r'^/api/categories/(\d+)$', path):
+                match = re.match(r'^/api/categories/(\d+)$', path)
+                cat_id = int(match.group(1))
+                try:
+                    database.update_category(cat_id, body_json)
+                    status, headers, body = self._send_json({'success': True})
+                except Exception as exc:
+                    status, headers, body = self._send_json({'error': str(exc)}, status='400 Bad Request')
+            else:
+                status, headers, body = self._send_json({'error': 'Endpoint not found'}, status='404 Not Found')
+        elif method == 'DELETE':
+            if re.match(r'^/api/tasks/(\d+)$', path):
+                task_id = int(re.match(r'^/api/tasks/(\d+)$', path).group(1))
+                database.delete_task(task_id)
+                status, headers, body = self._send_json({'success': True})
+            elif re.match(r'^/api/ideas/(\d+)$', path):
+                idea_id = int(re.match(r'^/api/ideas/(\d+)$', path).group(1))
+                database.delete_idea(idea_id)
+                status, headers, body = self._send_json({'success': True})
+            elif re.match(r'^/api/categories/(\d+)$', path):
+                cat_id = int(re.match(r'^/api/categories/(\d+)$', path).group(1))
+                database.delete_category(cat_id)
+                status, headers, body = self._send_json({'success': True})
+            elif re.match(r'^/api/business/(\d+)$', path):
+                log_id = int(re.match(r'^/api/business/(\d+)$', path).group(1))
+                database.delete_business_log(log_id)
+                status, headers, body = self._send_json({'success': True})
+            else:
+                status, headers, body = self._send_json({'error': 'Endpoint not found'}, status='404 Not Found')
+        else:
+            status, headers, body = self._send_json({'error': 'Method not allowed'}, status='405 Method Not Allowed')
+
+        start_response(status, headers)
+        return body
+
+
 def run_server(port=PORT):
     database.init_db()
     with socketserver.TCPServer(("", port), FocusFlowHandler) as httpd:
         httpd.allow_reuse_address = True
         print(f"🚀 FocusFlow Server running at http://localhost:{port}")
         httpd.serve_forever()
+
+app = FocusFlowWSGIApp()
 
 if __name__ == "__main__":
     run_server()
