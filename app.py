@@ -15,7 +15,7 @@ import database
 import ai_engine
 import calendar_service
 
-PORT = int(os.environ.get("PORT", 8080))
+PORT = int(os.environ.get("PORT", 8000))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
@@ -372,4 +372,5 @@ def run_server(port=PORT):
         httpd.serve_forever()
 
 if __name__ == "__main__":
+    database.init_db()
     run_server()
