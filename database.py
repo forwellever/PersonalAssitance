@@ -12,8 +12,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
+try:
+    import libsql_experimental as libsql
+except ImportError:
+    libsql = None
 
-# 自動讀取 .env 檔案（無論直接使用 python3 app.py 或 ./run.sh 都能自動生效）
+
 def load_dotenv():
     env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(env_file):
@@ -30,13 +34,12 @@ def load_dotenv():
         except Exception:
             pass
 
+# 優先載入本地 .env（本地開發使用，Render 上則直接讀取 Render 後台設定的環境變數）
 load_dotenv()
 
-DEFAULT_TURSO_URL = "libsql://myapp1-forwellever.aws-ap-northeast-1.turso.io"
-DEFAULT_TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTMxNTgyMjIsImlkIjoiMDFhMTgwODktM2QwMS03YzE1LTlkMDgtYzU2NjIyYTY2ZjM2Iiwia2lkIjoiYTNra1BNQ0lSd09VWW1wbVpyMlZ2SW1IOGRpcnltVnJLSEZwcXZGbTU0NCIsInJpZCI6IjNkZTkwY2QzLTY5MWEtNDNlYy04ODBhLTgyYTRmN2Q0ODBmZCJ9.M5nHv6hsCh1_05bw8ca6hZFKMOWDarHAYuzuuhQPu2tRdx7kpXQGTnPt3Os7hotRC-HfFOZ2pdZrAIeq-5V6Bg"
-
-TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL", DEFAULT_TURSO_URL)
-TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", DEFAULT_TURSO_TOKEN)
+# 完全由系統環境變數取得，不再寫死任何預設金鑰
+TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
 SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "focusflow.db")
 
 _client = None
@@ -69,18 +72,21 @@ def get_client():
     url = os.environ.get("TURSO_DATABASE_URL", TURSO_DATABASE_URL)
     token = os.environ.get("TURSO_AUTH_TOKEN", TURSO_AUTH_TOKEN)
 
-    if not url or not token:
+    # 若未提供 Turso 連線資訊，自動退回本地 SQLite
+    if not url or not token or libsql is None:
+        print("⚠️ 未檢測到完整的 TURSO 環境變數，使用本地 SQLite 資料庫")
+        _client = "sqlite"
+        return _client
+  
+    try:
+        _client = libsql.connect(url, auth_token=token)
+        print("✅ 成功連線至 Turso 雲端 LibSQL 資料庫！")
+        return _client
+    except Exception as e:
+        print(f"⚠️ Turso 連線失敗，退回本地 SQLite: {e}")
         _client = "sqlite"
         return _client
 
-    try:
-        # 使用 libsql-experimental 原生連線，無需手動取代為 https://
-        _client = libsql.connect(url, auth_token=token)
-        return _client
-    except Exception as e:
-        print(f"Turso 連線失敗，退回本地 SQLite: {e}")
-        import sqlite3
-        return sqlite3.connect("focusflow.db")
 get_connection = get_client
 
 def execute_query(sql, params=None):
@@ -94,6 +100,7 @@ def execute_query(sql, params=None):
         cols = res.columns
         return [dict(zip(cols, row)) for row in res.rows]
     except Exception as e:
+        print(f"Turso query error, fallback to sqlite: {e}")
         return _sqlite_execute(sql, params)
 
 def execute_mutate(sql, params=None):
@@ -105,6 +112,7 @@ def execute_mutate(sql, params=None):
     try:
         return client.execute(sql, list(params) if params else [])
     except Exception as e:
+        print(f"Turso mutate error, fallback to sqlite: {e}")
         return _sqlite_execute(sql, params)
 
 def init_db():
@@ -182,7 +190,7 @@ def init_db():
     );
     """)
 
-    # 6. Email 動態驗證碼表 (Email OTPs)
+    # 6. Email 動態驗證碼表 (Email OTPs) - 雲端 Turso 專用
     execute_mutate("""
     CREATE TABLE IF NOT EXISTS email_otps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,14 +213,14 @@ def init_db():
     );
     """)
 
-    # 自動遷移歷史資料表結構（確保已有資料庫補上 user_id 欄位）
+    # 自動遷移歷史資料表結構
     for tbl in ['tasks', 'ideas', 'business_logs', 'task_categories']:
         try:
             execute_mutate(f"ALTER TABLE {tbl} ADD COLUMN user_id INTEGER;")
         except Exception:
             pass
 
-    # 檢查是否需要預設類別
+    # 檢查預設類別
     cats = execute_query("SELECT COUNT(*) as count FROM task_categories;")
     cat_count = cats[0]['count'] if cats else 0
     if cat_count == 0:
@@ -249,44 +257,39 @@ def seed_default_categories(user_id=None):
                 pass
 
 def generate_and_save_otp(email):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    # 1. 產生 6 位數 OTP
+    """Generates a 6-digit OTP, stores it in Turso email_otps table, and sends via SMTP."""
+    email = email.strip().lower()
     code = f"{random.randint(100000, 999999)}"
     now = datetime.now()
     expires_at = (now + timedelta(minutes=10)).isoformat()
     now_str = now.isoformat()
 
-    # 2. 存入資料庫以供後續驗證
+    # 1. 統一使用 execute_mutate 寫入 Turso 的 email_otps 表
     try:
-        cursor.execute("""
-            INSERT INTO otps (email, code, expires_at, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (email, code, expires_at, now_str))
-        conn.commit()
+        execute_mutate("""
+            INSERT INTO email_otps (email, code, expires_at, used, created_at)
+            VALUES (?, ?, ?, 0, ?);
+        """, [email, code, expires_at, now_str])
+        print(f" OTP 已成功寫入 Turso 雲端資料庫 email_otps: {email} -> {code}")
     except Exception as db_err:
-        print(f"寫入 OTP 記錄失敗: {db_err}")
-    finally:
-        conn.close()
+        print(f"❌ 寫入 Turso 失敗: {db_err}")
 
-    # 3. 嘗試 SMTP 寄信
+    # 2. 嘗試 SMTP 發信
     email_sent = False
     try:
-        # 呼叫你原本的 SMTP 寄信函式（若有）
-        # send_smtp_email(email, code)
-        pass  # 本地尚未連線 SMTP 則會走此處
+        ok, msg = send_otp_email(email, code)
+        email_sent = ok and "已成功發送" in msg
     except Exception as e:
-        print(f"⚠️ SMTP 發送失敗: {e}")
+        print(f"⚠️ SMTP 發送失敗或未設定: {e}")
         email_sent = False
 
-    # 4. 重要：回傳字典必須包含 success: True 與 dev_code: code
+    # 3. 回傳 dev_code 給前端彈窗/提示帶入
     return {
         "success": True,
-        "dev_code": code,  # 必須叫 dev_code，app.js 才會在畫面上顯示
-        "message": "驗證碼已寄出" if email_sent else f"【測試模式】驗證碼為：{code}"
+        "dev_code": code,
+        "message": "驗證碼已寄送至您的信箱！" if email_sent else f"【測試模式】動態驗證碼為：{code}"
     }
-    
+
 def send_otp_email(to_email: str, code: str):
     """Sends OTP code via SMTP if configured; otherwise logs to console."""
     smtp_host = os.environ.get("SMTP_HOST")
@@ -296,24 +299,19 @@ def send_otp_email(to_email: str, code: str):
     smtp_from = os.environ.get("SMTP_FROM", smtp_user or "noreply@focusflow.com")
     smtp_tls = os.environ.get("SMTP_TLS", "true").lower() == "true"
 
-    subject = f"【FocusFlow】您的登入動態確認碼：{code}"
-    html_content = f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-        <div style="display: flex; align-items: center; margin-bottom: 20px;">
-            <h2 style="color: #4f46e5; margin: 0; font-size: 20px;">⚡ FocusFlow 智慧工作追蹤</h2>
-        </div>
-        <p style="color: #334155; font-size: 15px; line-height: 1.6;">您好！您正嘗試登入系統，請於登入畫面輸入以下 6 位數動態確認碼：</p>
-        <div style="background: #f8fafc; border: 1px dashed #cbd5e1; padding: 20px; border-radius: 12px; text-align: center; margin: 24px 0;">
-            <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #1e293b; font-family: monospace;">{code}</span>
-        </div>
-        <p style="color: #64748b; font-size: 13px; line-height: 1.5;">• 此確認碼有效期限為 <strong>10 分鐘</strong>。<br>• 若非您本人發起的登入請求，請忽略本信件。</p>
-        <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;">
-        <p style="color: #94a3b8; font-size: 12px; margin: 0;">FocusFlow 智慧工作追蹤與代辦排程系統</p>
-    </div>
-    """
-
     if smtp_host and smtp_user and smtp_pass:
         try:
+            subject = f"【FocusFlow】您的登入動態確認碼：{code}"
+            html_content = f"""
+            <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px;">
+                <h2 style="color: #4f46e5;">⚡ FocusFlow 智慧工作追蹤</h2>
+                <p>請於登入畫面輸入以下 6 位數動態確認碼：</p>
+                <div style="background: #f8fafc; border: 1px dashed #cbd5e1; padding: 20px; text-align: center; margin: 24px 0;">
+                    <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #1e293b;">{code}</span>
+                </div>
+                <p style="color: #64748b; font-size: 13px;">有效期限 10 分鐘。</p>
+            </div>
+            """
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = smtp_from
@@ -329,26 +327,20 @@ def send_otp_email(to_email: str, code: str):
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_from, [to_email], msg.as_string())
             server.quit()
-            print(f"📧 [FocusFlow SMTP] 已成功發送驗證碼至 {to_email}")
-            return True, "動態確認碼已寄送至您的 Email 信箱，請查收！"
+            return True, "動態確認碼已成功發送至您的 Email 信箱"
         except Exception as e:
-            print(f"⚠️ [FocusFlow SMTP 發送失敗] {e}")
-            return True, f"動態確認碼已生成 (SMTP 提醒: {e})"
+            print(f"⚠️ SMTP 錯誤: {e}")
+            return False, f"SMTP 錯誤: {e}"
     else:
-        print(f"\n==========================================")
-        print(f"🔑 [FocusFlow 開發測試驗證碼]")
-        print(f"   收件 Email: {to_email}")
-        print(f"   動態確認碼: {code}")
-        print(f"   (若需寄發真實郵件，請在 .env 中配置 SMTP_HOST 等變數)")
-        print(f"==========================================\n")
-        return True, "動態確認碼已產生！(未設定 SMTP，已同步顯示於控制台/提示中)"
+        return False, "未設定 SMTP"
 
 def verify_otp_and_login(email: str, code: str):
     """Verifies the OTP code for an email and issues a 30-day session token."""
     email = email.strip().lower()
-    code = code.strip()
+    code = str(code).strip()
     now_iso = datetime.now().isoformat()
 
+    # 統一由 Turso email_otps 查詢
     rows = execute_query(
         "SELECT * FROM email_otps WHERE email = ? AND code = ? AND used = 0 AND expires_at >= ? ORDER BY id DESC LIMIT 1;",
         [email, code, now_iso]
@@ -379,36 +371,25 @@ def verify_otp_and_login(email: str, code: str):
     }
 
 def get_or_create_user(email: str):
-    """Finds a user by email, or creates a new user and seeds their default categories."""
     email = email.strip().lower()
     users = execute_query("SELECT * FROM users WHERE email = ? LIMIT 1;", [email])
     if users:
         return users[0]
 
-    # 建立新使用者
     now = datetime.now().isoformat()
     name = email.split('@')[0]
     res = execute_mutate("INSERT INTO users (email, name, created_at) VALUES (?, ?, ?);", [email, name, now])
-    user_id = res.last_insert_rowid
+    
+    # 支援 Turso 及 SQLite 的回傳格式相容
+    user_id = getattr(res, "last_insert_rowid", None)
+    if user_id is None:
+        created_user = execute_query("SELECT id FROM users WHERE email = ? LIMIT 1;", [email])
+        user_id = created_user[0]['id'] if created_user else 1
 
-    # 為新使用者建立個人預設分類
     seed_default_categories(user_id=user_id)
-
-    # 若歷史任務中仍有 user_id 為 NULL 的孤立任務，且這是第一位使用者，可歸屬其名下
-    try:
-        user_count = execute_query("SELECT COUNT(*) as count FROM users;")[0]['count']
-        if user_count == 1:
-            execute_mutate("UPDATE tasks SET user_id = ? WHERE user_id IS NULL;", [user_id])
-            execute_mutate("UPDATE ideas SET user_id = ? WHERE user_id IS NULL;", [user_id])
-            execute_mutate("UPDATE business_logs SET user_id = ? WHERE user_id IS NULL;", [user_id])
-            execute_mutate("UPDATE task_categories SET user_id = ? WHERE user_id IS NULL;", [user_id])
-    except Exception:
-        pass
-
     return {"id": user_id, "email": email, "name": name, "created_at": now}
 
 def get_user_by_token(token: str):
-    """Validates session token and returns user dictionary if valid and unexpired."""
     if not token:
         return None
     token = token.strip()
@@ -426,7 +407,6 @@ def get_user_by_token(token: str):
     return users[0] if users else None
 
 def delete_session(token: str):
-    """Logs out by removing the session token."""
     if token:
         execute_mutate("DELETE FROM sessions WHERE token = ?;", [token.strip()])
     return True
@@ -471,7 +451,8 @@ def create_task(data, user_id=None):
         now,
         now
     ])
-    return res.last_insert_rowid
+    user_id_val = getattr(res, "last_insert_rowid", None)
+    return user_id_val or 1
 
 def update_task(task_id, data, user_id=None):
     now = datetime.now().isoformat()
@@ -524,7 +505,7 @@ def create_idea(data, user_id=None):
         now,
         now
     ])
-    return res.last_insert_rowid
+    return getattr(res, "last_insert_rowid", None) or 1
 
 def update_idea(idea_id, data, user_id=None):
     now = datetime.now().isoformat()
@@ -586,7 +567,7 @@ def create_business_log(data, user_id=None):
         data.get('client_name', ''),
         now
     ])
-    return res.last_insert_rowid
+    return getattr(res, "last_insert_rowid", None) or 1
 
 def delete_business_log(log_id, user_id=None):
     if user_id:
@@ -611,7 +592,7 @@ def create_category(data, user_id=None):
         "INSERT INTO task_categories (user_id, name, color, created_at) VALUES (?, ?, ?, ?);",
         [user_id, name, color, now]
     )
-    return res.last_insert_rowid
+    return getattr(res, "last_insert_rowid", None) or 1
 
 def update_category(cat_id, data, user_id=None):
     if user_id:
