@@ -11,7 +11,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
-import libsql_client
+
 
 # 自動讀取 .env 檔案（無論直接使用 python3 app.py 或 ./run.sh 都能自動生效）
 def load_dotenv():
@@ -74,14 +74,13 @@ def get_client():
         return _client
 
     try:
-        if url.startswith("libsql://"):
-            url = url.replace("libsql://", "https://", 1)
-        _client = libsql_client.create_client_sync(url=url, auth_token=token)
+        # 使用 libsql-experimental 原生連線，無需手動取代為 https://
+        _client = libsql.connect(url, auth_token=token)
         return _client
     except Exception as e:
-        print(f"Turso 連線失敗，退回本地 SQLite：{e}")
-        _client = "sqlite"
-        return _client
+        print(f"Turso 連線失敗，退回本地 SQLite: {e}")
+        import sqlite3
+        return sqlite3.connect("focusflow.db")
 
 def execute_query(sql, params=None):
     """Executes a SELECT query and returns rows as list of dicts."""
