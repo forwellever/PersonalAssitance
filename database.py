@@ -257,24 +257,24 @@ def seed_default_categories(user_id=None):
                 pass
 
 def generate_and_save_otp(email):
-    """Generates a 6-digit OTP, stores it in Turso email_otps table, and sends via SMTP."""
+    """Generates a 6-digit OTP, stores it in email_otps, and ensures dev_code is returned."""
     email = email.strip().lower()
     code = f"{random.randint(100000, 999999)}"
     now = datetime.now()
     expires_at = (now + timedelta(minutes=10)).isoformat()
     now_str = now.isoformat()
 
-    # 1. 統一使用 execute_mutate 寫入 Turso 的 email_otps 表
+    # 1. 寫入資料表（若連線有問題不中斷執行，記錄 log 即可）
     try:
         execute_mutate("""
             INSERT INTO email_otps (email, code, expires_at, used, created_at)
             VALUES (?, ?, ?, 0, ?);
         """, [email, code, expires_at, now_str])
-        print(f" OTP 已成功寫入 Turso 雲端資料庫 email_otps: {email} -> {code}")
+        print(f"✅ OTP 已記錄: {email} -> {code}")
     except Exception as db_err:
-        print(f"❌ 寫入 Turso 失敗: {db_err}")
+        print(f"⚠️ 寫入 OTP 資料表失敗: {db_err}")
 
-    # 2. 嘗試 SMTP 發信
+    # 2. 嘗試發送信件（失敗不影響回傳）
     email_sent = False
     try:
         ok, msg = send_otp_email(email, code)
@@ -283,7 +283,7 @@ def generate_and_save_otp(email):
         print(f"⚠️ SMTP 發送失敗或未設定: {e}")
         email_sent = False
 
-    # 3. 回傳 dev_code 給前端彈窗/提示帶入
+    # 3. 前端需要 dev_code 才能顯示藍底驗證碼區塊
     return {
         "success": True,
         "dev_code": code,
